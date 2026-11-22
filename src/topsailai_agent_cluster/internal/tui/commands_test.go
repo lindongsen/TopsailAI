@@ -546,3 +546,51 @@ func TestPrepareActionPreservesProviderTarget(t *testing.T) {
 		t.Fatalf("provider_target=%q want=%q", got, want)
 	}
 }
+
+// TestPrepareActionNamesHandleTargetInConfirmation proves a confirmation question
+// names the session it is about when the target is a provider session handle.
+//
+// The handle form has no cluster resource ID, so reporting only the resource ID
+// printed "target=" and asked the operator to confirm a mutating command without
+// stating which session it would reach. A confirmation that names no target is not
+// a confirmation.
+func TestPrepareActionNamesHandleTargetInConfirmation(t *testing.T) {
+	api := &runnerStubAPI{}
+	runner := CommandRunner{API: api, NewID: func() string { return "cmd-handle" }}
+	_, err := runner.PrepareAction(context.Background(), ActionRequest{
+		Operation:            protocol.OperationAgentResume,
+		EndpointID:           "ep-1",
+		ProviderSessionHandle: "sad-1",
+		Payload:              json.RawMessage(`{}`),
+		Confirmed:            false,
+	})
+	if err == nil {
+		t.Fatal("expected a confirmation error")
+	}
+	if !strings.Contains(err.Error(), "sad-1") {
+		t.Fatalf("confirmation must name the session handle: %v", err)
+	}
+	if strings.Contains(err.Error(), "target= ") || strings.Contains(err.Error(), "target=;") {
+		t.Fatalf("confirmation must not leave the target empty: %v", err)
+	}
+}
+
+// TestPrepareActionNamesResourceTargetInConfirmation keeps the resource form naming
+// its resource ID, so the handle label never replaces the ordinary one.
+func TestPrepareActionNamesResourceTargetInConfirmation(t *testing.T) {
+	api := &runnerStubAPI{}
+	runner := CommandRunner{API: api, NewID: func() string { return "cmd-res" }}
+	_, err := runner.PrepareAction(context.Background(), ActionRequest{
+		Operation:  protocol.OperationAgentResume,
+		EndpointID: "ep-1",
+		ResourceID: "res_abc",
+		Payload:    json.RawMessage(`{}`),
+		Confirmed:  false,
+	})
+	if err == nil {
+		t.Fatal("expected a confirmation error")
+	}
+	if !strings.Contains(err.Error(), "target=res_abc") {
+		t.Fatalf("confirmation must name the resource ID: %v", err)
+	}
+}

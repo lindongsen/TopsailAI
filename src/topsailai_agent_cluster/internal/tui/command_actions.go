@@ -47,13 +47,31 @@ type ActionResult struct {
 	Value     map[string]any
 }
 
+// confirmationTargetLabel names the target a confirmation question is about.
+//
+// A target can be named by a cluster resource ID or by a provider session handle,
+// and the handle form has no resource ID at all. Reporting only the resource ID
+// therefore printed "target=" for a resume by handle, so the operator was asked to
+// confirm a mutating command without being told which session it would reach. The
+// label states whichever identity the request actually carries, and names the
+// handle explicitly so the two forms are never confused in the question.
+func confirmationTargetLabel(request ActionRequest) string {
+	if request.ResourceID != "" {
+		return request.ResourceID
+	}
+	if request.ProviderSessionHandle != "" {
+		return "session=" + request.ProviderSessionHandle
+	}
+	return ""
+}
+
 // PrepareAction validates and constructs an immutable intent.
 func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest) (protocol.ImmutableIntent, error) {
 	label := request.OperationLabel
 	if label == "" {
 		label = request.Operation
 	}
-	if err := RequireConfirmation(request.Confirmed, label, request.ResourceID, string(request.Payload)); err != nil {
+	if err := RequireConfirmation(request.Confirmed, label, confirmationTargetLabel(request), string(request.Payload)); err != nil {
 		return protocol.ImmutableIntent{}, err
 	}
 	descriptor, err := PreflightCapability(ctx, r.API, request.EndpointID, request.Operation)

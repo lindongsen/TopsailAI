@@ -148,6 +148,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	folder := flags.String("folder", "", "working folder for start")
 	task := flags.String("task", "", "literal initial task text for start; no JSON is required")
 	generation := flags.String("generation", "", "target generation; alternative to the positional generation argument")
+	// -s is the short spelling of --session, and both name the provider session
+	// identifier a resume addresses instead of a cluster resource ID. The
+	// interactive REPL accepts both spellings, so an operator who learned the form
+	// there can use it here. They are separate flags rather than one alias entry
+	// because Go's flag package has no alias mechanism, and the two are reconciled
+	// after parsing so they can never disagree about one target.
+	sessionHandle := flags.String("s", "", "provider session identifier for resume; alternative to the positional resource ID")
+	sessionHandleLong := flags.String("session", "", "long form of -s")
 	interactiveShort := flags.Bool("i", false, "start the interactive REPL (same as the interactive command)")
 	// A help request is a successful request, so it is answered before flag
 	// parsing: Go's flag package reports --help as flag.ErrHelp, which the caller
@@ -318,6 +326,15 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	if tokenBound > protocol.MaxMessagesMaxTokens {
 		return fmt.Errorf("--max-tokens %d exceeds the maximum of %d", tokenBound, protocol.MaxMessagesMaxTokens)
 	}
+	// The two spellings of the resume session handle are reconciled into one value
+	// before any command reads it, so -s and --session can never disagree about one
+	// target. Two different values are rejected instead of resolved by precedence,
+	// because either choice would silently resume a session the operator did not
+	// name. This mirrors the -c/--max-chars reconciliation above.
+	sessionHandleValue, err := reconcileSessionHandle(*sessionHandle, *sessionHandleLong)
+	if err != nil {
+		return err
+	}
 	switch flags.Arg(0) {
 	case "help":
 		if flags.NArg() > 2 {
@@ -461,7 +478,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		// Colour follows the output boundary, so a redirected stdout stays plain
 		// even when stdin is an interactive terminal.
 		color := tui.OutputColorPolicy(output)
-		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation)
+		return action(ctx, api, output, input, errors, color, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *profile, *profileRevision, *folder, *task, *generation, sessionHandleValue)
 	case "ctl", "control":
 		return ctlCommandWithProgress(ctx, api, output, errors, flags.Args(), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
 	case "exec":
@@ -642,6 +659,24 @@ func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
 	return maxChars, nil
 }
 
+// reconcileSessionHandle folds the two spellings of the resume session handle into
+// one value, so -s and --session can never disagree about one target.
+//
+// Two different values are rejected rather than resolved by precedence, because
+// either choice would resume a session the operator did not name. An empty value
+// is treated as absent, so "-s ''" cannot silently degrade into the resource-ID
+// form and resume a different target than the one the operator typed.
+func reconcileSessionHandle(short, long string) (string, error) {
+	short, long = strings.TrimSpace(short), strings.TrimSpace(long)
+	if short != "" && long != "" && short != long {
+		return "", fmt.Errorf("-s %q and --session %q disagree; state the session once", short, long)
+	}
+	if short != "" {
+		return short, nil
+	}
+	return long, nil
+}
+
 // reconcileMaxTokens folds the two spellings of the per-message token bound into
 // one value, so -t and --max-tokens can never disagree about one quantity.
 //
@@ -715,6 +750,7 @@ var globalOptionNames = map[string]bool{
 	"max-tokens": true, "t": true,
 	"profile": true, "profile-revision": true, "folder": true, "task": true,
 	"generation": true, "i": true, "follow": true, "f": true,
+	"s": true, "session": true,
 }
 
 // booleanGlobalOptions lists the hoisted options that take no value, so hoisting
@@ -779,8 +815,13 @@ func hoistTrailingFlags(args []string) []string {
 			rest = append(rest, args[i:]...)
 			break
 		}
+		// A hoisted option must actually be spelled as an option. splitOptionName
+		// trims leading dashes, so a bare positional word such as the "session" in
+		// "messages ep session" would otherwise match an option of the same name and
+		// be hoisted in front of the subcommand, which then reads that word as the
+		// command and reports `unknown command "session"`. A word is not an option.
 		name, hasValue := splitOptionName(arg)
-		if !globalOptionNames[name] {
+		if !strings.HasPrefix(arg, "-") || arg == "-" || !globalOptionNames[name] {
 			rest = append(rest, arg)
 			continue
 		}
@@ -1447,7 +1488,7 @@ func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 // operator-facing guidance and the verbatim multi-line task echo, so the
 // machine-readable output stream stays clean under --json. The colour policy is
 // resolved by the caller, because only it knows whether the output is a terminal.
-func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, diagnostics io.Writer, color tui.ColorPolicy, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag string) error {
+func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.Reader, diagnostics io.Writer, color tui.ColorPolicy, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, profile, profileRevision, folder, task, generationFlag, sessionHandle string) error {
 	operation := args[0]
 	// A "--" after the command word ends option parsing, so everything after it is
 	// literal data. The head is still checked for misplaced flags, because a flag
@@ -1462,10 +1503,34 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
 	}
-	if operation != "stop" && len(args) < 3 {
+	// A resume named by provider session handle addresses its target with the
+	// handle instead of a positional resource ID, so the resource slot does not
+	// exist in that form and the endpoint is the only positional it requires. The
+	// handle is resolved by the Endpoint, which mints the durable mapping when the
+	// command arrives; the client never looks the session up, because the operator
+	// named the exact target and a client-side lookup would reject a session the
+	// Endpoint has not discovered yet.
+	handleForm := operation == "resume" && sessionHandle != ""
+	if handleForm && len(args) < 2 {
+		return fmt.Errorf("usage: resume <endpoint-id> -s <session-id> [--generation <generation>]")
+	}
+	if operation != "stop" && !handleForm && len(args) < 3 {
 		return fmt.Errorf("usage: %s <endpoint-id> <resource-id> [text] [generation]", operation)
 	}
-	endpointID, resourceID := args[1], args[2]
+	// A handle and a positional resource are two ways to name one target, so
+	// accepting both would leave the client choosing between them. In the handle
+	// form the resource slot does not exist, so any positional after the endpoint
+	// is refused rather than reinterpreted as a generation: a resource ID read as
+	// an expected generation would be sent as proof of a process identity it never
+	// described. The generation therefore travels in --generation for this form.
+	if handleForm && len(args) > 2 {
+		return fmt.Errorf("resume accepts either -s <session-id> or a positional resource ID, not both; in the -s form state the generation with --generation; run help resume for valid syntax")
+	}
+	endpointID := args[1]
+	resourceID := ""
+	if !handleForm {
+		resourceID = args[2]
+	}
 	// The documented syntax accepts at most one text and one generation positional. A
 	// value supplied by a flag removes its positional slot, so an unquoted multi-word
 	// message is rejected instead of being silently truncated to its first word.
@@ -1475,7 +1540,27 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		positionalLimit = 4
 		textStart = 0
 	}
-	if generationFlag != "" {
+	// resume carries no text payload, so its only optional positional is the
+	// generation. Treating the slot as text made the documented example
+	// "resume <endpoint> <resource> <generation>" consume the generation as a
+	// discarded payload, so the expected generation was silently ignored and the
+	// Endpoint revalidated nothing. The slot is therefore the generation, and the
+	// limit is one positional lower than the text-bearing family.
+	if operation == "resume" {
+		positionalLimit = 4
+		textStart = 0
+	}
+	if handleForm {
+		// The endpoint is the only positional in this form, so the limit is the
+		// command word plus the endpoint. A generation is accepted only through
+		// --generation, which is why the flag does not widen this limit.
+		positionalLimit = 2
+	}
+	// A generation supplied by the flag frees its positional slot, but only in the
+	// forms that have such a slot. The handle form has none, so decrementing there
+	// would reject the endpoint itself and report the operator's own endpoint as an
+	// unexpected argument.
+	if generationFlag != "" && !handleForm {
 		positionalLimit--
 	}
 	if operation == "start" && task != "" {
@@ -1487,7 +1572,11 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	}
 	generation := generationFlag
 	payload := json.RawMessage(`{}`)
-	if operation == "stop" || operation == "clean" {
+	// resume belongs with stop and clean rather than with the text-bearing family:
+	// it carries no text payload, so its optional positional is the expected
+	// generation. Reading that slot as text discarded it, which made the documented
+	// example silently revalidate nothing.
+	if operation == "stop" || operation == "clean" || operation == "resume" {
 		if generation == "" && len(args) >= 4 {
 			generation = args[3]
 		}
@@ -1567,7 +1656,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 		payload = resolved
 	}
-	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: generation}
+	target := protocol.CommandTarget{Kind: "session", ResourceID: resourceID, ProviderGeneration: generation, ProviderSessionHandle: sessionHandle}
 	if operation == "start" {
 		target = protocol.CommandTarget{}
 	}
@@ -1577,7 +1666,7 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		}
 	}
 	operationValue := operationName(operation)
-	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
+	request := tui.ActionRequest{Operation: operationValue, OperationLabel: operation, EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderSessionHandle: sessionHandle, Payload: payload, Confirmed: confirmed, WaitTimeoutMS: waitTimeoutMS, Profile: profile, ProfileRevision: profileRevision, Folder: folder}
 	runner := legacyRunner(api)
 	// Progress is created before the capability preflight, because that preflight
 	// is itself a network round trip the operator would otherwise wait through

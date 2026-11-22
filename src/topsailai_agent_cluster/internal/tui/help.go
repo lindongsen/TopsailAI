@@ -349,12 +349,15 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.syntax = "agent-cluster-cli [options] " + name + " <endpoint> <resource> [text] [generation]"
 	case "resume":
 		// resume exists on both surfaces, but the standalone form addresses the
-		// session by resource ID because it has no rendered history table, so the
-		// syntax and parameters differ from the interactive row-number form.
-		entry.syntax = "agent-cluster-cli [options] resume <endpoint> <resource> [text] [generation]"
-		entry.description = "resume a stopped session identified by resource ID; the endpoint must prove from a complete fresh inventory that the session has no live generation"
-		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID of the stopped session", "text: optional literal initial task text", "generation: optional expected generation; a live generation is rejected instead of resumed", "--json: write the structured receipt instead of the rendered one"}
-		entry.examples = []string{"resume endpoint-1 res_abc", "resume endpoint-1 res_abc gen-1"}
+		// session by resource ID or by provider session handle because it has no
+		// rendered history table, so the syntax and parameters differ from the
+		// interactive row-number form. The handle form exists for the same reason it
+		// exists interactively: a session the Endpoint has not discovered yet has no
+		// cluster resource ID, and that is exactly the session resume is for.
+		entry.syntax = "agent-cluster-cli [options] resume <endpoint> <resource> [generation] | resume <endpoint> -s <session-id> [--generation <generation>]"
+		entry.description = "resume a stopped session identified by resource ID or by provider session ID; the endpoint must prove from a complete fresh inventory that the session has no live generation"
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID of the stopped session", "-s <session_id> (or --session <session_id>): name the provider session identifier directly, for a session the endpoint has not discovered and therefore has no resource ID for; the client does not check whether the session exists, because the operator named the exact target and the endpoint mints the mapping when the command arrives", "generation: optional expected generation; a live generation is rejected instead of resumed. In the -s form state it with --generation, because the positional slot belongs to the resource ID", "a handle and a positional resource are mutually exclusive, because they are two ways to name one target", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"resume endpoint-1 res_abc", "resume endpoint-1 res_abc gen-1", "resume endpoint-1 -s 20261013131753", "resume endpoint-1 -s 20261013131753 --generation gen-1"}
 	case "stop":
 		entry.syntax = "agent-cluster-cli [options] stop <endpoint> <resource> <generation>"
 	case "clean":

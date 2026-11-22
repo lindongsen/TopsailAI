@@ -27,7 +27,7 @@ func runStartAction(t *testing.T, input string, color tui.ColorPolicy, args ...s
 	t.Helper()
 	stub := &startPathStub{}
 	var out, diagnostics strings.Builder
-	err := action(context.Background(), stub, &out, strings.NewReader(input), &diagnostics, color, args, true, false, 100, "profile-1", "rev-1", "", "", "")
+	err := action(context.Background(), stub, &out, strings.NewReader(input), &diagnostics, color, args, true, false, 100, "profile-1", "rev-1", "", "", "", "")
 	return out.String(), diagnostics.String(), stub, err
 }
 
@@ -112,7 +112,7 @@ func TestStandaloneStartEchoIsPlainWithoutColor(t *testing.T) {
 func TestStandaloneStartJSONKeepsEchoOffStdout(t *testing.T) {
 	stub := &startPathStub{}
 	var out, diagnostics strings.Builder
-	err := action(context.Background(), stub, &out, strings.NewReader("body line\nEOF\n"), &diagnostics, tui.ColorPolicy{Enabled: true}, []string{"start", "ep", "session"}, true, true, 100, "profile-1", "rev-1", "", "", "")
+	err := action(context.Background(), stub, &out, strings.NewReader("body line\nEOF\n"), &diagnostics, tui.ColorPolicy{Enabled: true}, []string{"start", "ep", "session"}, true, true, 100, "profile-1", "rev-1", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestStandaloneStartTaskFlagWinsOverMultiLine(t *testing.T) {
 	stub := &startPathStub{}
 	var out, diagnostics strings.Builder
 	input := &unreadableInput{}
-	err := action(context.Background(), stub, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session"}, true, false, 100, "profile-1", "rev-1", "", "flag task", "")
+	err := action(context.Background(), stub, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session"}, true, false, 100, "profile-1", "rev-1", "", "flag task", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestStandaloneStartPositionalTaskWinsOverMultiLine(t *testing.T) {
 	stub := &startPathStub{}
 	var out, diagnostics strings.Builder
 	input := &unreadableInput{}
-	err := action(context.Background(), stub, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session", "positional task"}, true, false, 100, "profile-1", "rev-1", "", "", "")
+	err := action(context.Background(), stub, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session", "positional task"}, true, false, 100, "profile-1", "rev-1", "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestTaskEchoWriter(t *testing.T) {
 func TestStandaloneStartValidatesProfileBeforeReadingTask(t *testing.T) {
 	input := &unreadableInput{}
 	var out, diagnostics strings.Builder
-	err := action(context.Background(), &startPathStub{}, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), &startPathStub{}, &out, input, &diagnostics, tui.ColorPolicy{}, []string{"start", "ep", "session"}, true, false, 100, "", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("a start without a launch profile must fail")
 	}

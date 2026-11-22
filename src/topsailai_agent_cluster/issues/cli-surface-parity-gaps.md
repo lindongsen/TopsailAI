@@ -54,16 +54,33 @@ target-less intent, matching the contract that a machine-wide declaration carrie
 target. The standalone `model` help entry advertises all three forms, and
 `TestModelRegistryAndSetAreAdvertised` fails if the advertisement is removed.
 
-### 2. `resume -s <session_id>` has no standalone spelling
+### 2. `resume -s <session_id>` has no standalone spelling — FIXED
 
 Interactive `resume` accepts `-s`/`--session` and forwards `ProviderSessionHandle`
-(`internal/tui/interactive_ops.go:1209`). Standalone `resume` builds
-`CommandTarget{Kind: "session", ResourceID: resourceID}` only
-(`src/main/agent-cluster-cli/main.go:1554`), and `ProviderSessionHandle` appears nowhere in
-`src/main/agent-cluster-cli/` (`grep -c ProviderSessionHandle` returns 0).
+(`internal/tui/interactive_ops.go:1209`). Standalone `resume` built
+`CommandTarget{Kind: "session", ResourceID: resourceID}` only, and `ProviderSessionHandle` appeared
+nowhere in `src/main/agent-cluster-cli/`.
 
-Impact: a session the Endpoint has never discovered has no cluster resource ID, so it can be
+Impact: a session the Endpoint has never discovered has no cluster resource ID, so it could be
 resumed interactively but not from a script. The handle form exists precisely for that case.
+
+Resolution: standalone `resume` now accepts `-s`/`--session` and forwards the handle through
+`ActionRequest` into the intent target. The Endpoint already resolved handles
+(`internal/endpoint/executor.go:489-523`), so this was a client-side wiring gap and needed no
+protocol, Server, Endpoint or Provider change. The two spellings are reconciled after parsing and
+rejected when they disagree, mirroring `-c`/`--max-chars`. In the handle form the resource slot does
+not exist, so a positional after the endpoint is refused rather than reinterpreted as a generation,
+and the generation travels in `--generation`.
+
+Two latent defects were found and fixed in the same unit:
+
+- The documented positional form `resume <endpoint> <resource> <generation>` silently discarded the
+  generation, because `resume` was absent from the generation branch and the slot was read as a
+  discarded text payload. The Endpoint therefore revalidated nothing while the command reported
+  success.
+- `PrepareAction` reported only `request.ResourceID` in the confirmation question, so the handle form
+  printed `target=` and asked the operator to confirm a mutating command without naming the session.
+  The shared layer now names whichever identity the request carries, which fixes both surfaces.
 
 ### 3. Endpoint-scope `command.exec` has no standalone spelling
 
@@ -104,7 +121,22 @@ one, because it reads as a complete verification.
 
 ## Status
 
-Gap 1 fixed and verified. Gaps 2 and 3 recorded, not fixed.
+Gap 1 fixed and verified. Gap 2 fixed and verified. Gap 3 recorded, not fixed.
+
+Gap 2 evidence: `make test-unit-cli` green (`internal/client`, `internal/tui`,
+`src/main/agent-cluster-cli`), `go build ./...` clean, `go vet` clean. The new tests were proven to
+fail when each guard was deliberately broken: removing the dash check in `hoistTrailingFlags` failed
+the bare-word cases, removing `resume` from the generation branch failed the positional-generation
+case, dropping the handle from `ActionRequest` failed the handle-forwarding case, and reverting the
+confirmation label failed the handle-target case. The real binary was also driven end to end:
+`resume ep -s sad-1` hoists the trailing flag and prints `target=session=sad-1`, while
+`-s sad-1 --session sad-2` and `resume ep res_abc -s sad-1` are both refused.
+
+A latent hoisting defect was found and fixed in the same unit: `hoistTrailingFlags` consulted
+`globalOptionNames` for every argument, and `version.SplitOptionName` trims leading dashes, so a bare
+positional word matching an option name was hoisted in front of the subcommand. `messages ep session`
+therefore failed with `unknown command "session"`. Every option name that can also be a positional
+value had this defect, not only the newly added `session`.
 
 Gap 1 evidence: `go build ./...` clean, `go vet` clean, `go test ./internal/tui/
 ./src/main/agent-cluster-cli/` green, and the new tests were proven to fail when each dispatch branch

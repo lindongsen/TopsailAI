@@ -88,7 +88,7 @@ func TestLegacyAndInteractiveShowUseSharedRunnerMethods(t *testing.T) {
 func TestLegacyActionAndInteractiveSendShareIntentFields(t *testing.T) {
 	legacy := &actionPathStub{}
 	var legacyOut strings.Builder
-	if err := action(context.Background(), legacy, &legacyOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), legacy, &legacyOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hi"}`, "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	interactive := &actionPathStub{}
@@ -442,12 +442,12 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 func TestStandalonePlainTextMessageReachesIntent(t *testing.T) {
 	plain := &actionPathStub{}
 	var plainOut strings.Builder
-	if err := action(context.Background(), plain, &plainOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), plain, &plainOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	jsonForm := &actionPathStub{}
 	var jsonOut strings.Builder
-	if err := action(context.Background(), jsonForm, &jsonOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), jsonForm, &jsonOut, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"hello world"}`, "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(plain.intents) != 1 || len(jsonForm.intents) != 1 {
@@ -912,7 +912,7 @@ func TestStandaloneSendWithoutTextReadsMultiLineBlock(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := strings.NewReader("first line\nsecond line\nEOF\n")
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "gen", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.intents) != 1 {
@@ -932,7 +932,7 @@ func TestStandaloneSendMultiLineEndsAtEndOfInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := strings.NewReader("first\nsecond\n")
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.intents) != 1 {
@@ -949,7 +949,7 @@ func TestStandaloneSendMultiLineRejectsEmptyBlock(t *testing.T) {
 	for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
 		stub := &actionPathStub{}
 		var out strings.Builder
-		err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+		err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "", "")
 		if err == nil || err.Error() != "payload must not be empty" {
 			t.Fatalf("input=%q error=%v", input, err)
 		}
@@ -965,7 +965,7 @@ func TestStandaloneSendWithTextDoesNotReadInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
 	input := &unreadableInput{}
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello world", "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if input.reads != 0 {
@@ -996,7 +996,7 @@ func TestStandaloneControlKeepsItsGrammar(t *testing.T) {
 	stub := &allCapabilityStub{}
 	var out strings.Builder
 	input := &unreadableInput{}
-	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"interrupt", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{"interrupt", "ep", "session"}, true, false, 100, "", "", "", "", "gen", ""); err != nil {
 		t.Fatalf("control: %v", err)
 	}
 	if input.reads != 0 {
@@ -1015,7 +1015,7 @@ func TestStandaloneContextInjectMultiLineReadsBlock(t *testing.T) {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
 		input := strings.NewReader("first line\n  indented line\nEOF\n")
-		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen", ""); err != nil {
 			t.Fatalf("%s: %v", operation, err)
 		}
 		if len(stub.intents) != 1 {
@@ -1034,7 +1034,7 @@ func TestStandaloneContextInjectMultiLineRejectsEmptyBlock(t *testing.T) {
 		for _, input := range []string{"EOF\n", "", "\n\nEOF\n"} {
 			stub := &allCapabilityStub{}
 			var out strings.Builder
-			err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen")
+			err := action(context.Background(), stub, &out, strings.NewReader(input), io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session"}, true, false, 100, "", "", "", "", "gen", "")
 			if err == nil || err.Error() != "payload must not be empty" {
 				t.Fatalf("%s input=%q error=%v", operation, input, err)
 			}
@@ -1050,7 +1050,7 @@ func TestStandaloneContextInjectMultiLineRejectsEmptyBlock(t *testing.T) {
 func TestStandaloneContextInjectMultiLineEndsAtEndOfInput(t *testing.T) {
 	stub := &allCapabilityStub{}
 	var out strings.Builder
-	if err := action(context.Background(), stub, &out, strings.NewReader("only line\n"), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen"); err != nil {
+	if err := action(context.Background(), stub, &out, strings.NewReader("only line\n"), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen", ""); err != nil {
 		t.Fatalf("btw: %v", err)
 	}
 	if got, want := string(stub.intents[0].Payload), `{"text":"only line"}`; got != want {
@@ -1065,7 +1065,7 @@ func TestStandaloneContextInjectWithTextDoesNotReadInput(t *testing.T) {
 		stub := &allCapabilityStub{}
 		var out strings.Builder
 		input := &unreadableInput{}
-		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session", "hello context", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+		if err := action(context.Background(), stub, &out, input, io.Discard, tui.ColorPolicy{}, []string{operation, "ep", "session", "hello context", "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 			t.Fatalf("%s: %v", operation, err)
 		}
 		if input.reads != 0 {
@@ -1082,7 +1082,7 @@ func TestStandaloneContextInjectWithTextDoesNotReadInput(t *testing.T) {
 func TestStandaloneContextInjectMultiLineRejectsUnreadableInput(t *testing.T) {
 	stub := &allCapabilityStub{}
 	var out strings.Builder
-	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen")
+	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session"}, true, false, 100, "", "", "", "", "gen", "")
 	if err == nil || err.Error() != "multi-line input requires a readable stream" {
 		t.Fatalf("error=%v", err)
 	}
@@ -1096,7 +1096,7 @@ func TestStandaloneContextInjectMultiLineRejectsUnreadableInput(t *testing.T) {
 func TestStandaloneSendMultiLineRejectsUnreadableInput(t *testing.T) {
 	stub := &actionPathStub{}
 	var out strings.Builder
-	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &out, nil, io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session"}, true, false, 100, "", "", "", "", "", "")
 	if err == nil || err.Error() != "multi-line input requires a readable stream" {
 		t.Fatalf("error=%v", err)
 	}
@@ -1192,7 +1192,7 @@ func TestActionRejectsMisplacedFlag(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			stub := &actionPathStub{}
-			err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, args, true, false, 100, "", "", "", "", "")
+			err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, args, true, false, 100, "", "", "", "", "", "")
 			if err == nil || !strings.Contains(err.Error(), "must be written before the command") {
 				t.Fatalf("err=%v", err)
 			}
@@ -1207,7 +1207,7 @@ func TestActionRejectsMisplacedFlag(t *testing.T) {
 // a message that is itself a flag token is still deliverable as a JSON object payload.
 func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", `{"text":"--json"}`, "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 {
@@ -1225,7 +1225,7 @@ func TestActionAcceptsDashLeadingTextThroughJSONPayload(t *testing.T) {
 // leading dash alone does not make a token a flag.
 func TestActionAcceptsNegativeGeneration(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "-1"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "-1" {
@@ -1238,7 +1238,7 @@ func TestActionAcceptsNegativeGeneration(t *testing.T) {
 // second word became the target generation.
 func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
 	stub := &actionPathStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please", "add", "to", "the", "config"}, true, false, 100, "", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "quote the message text") {
 		t.Fatalf("err=%v", err)
 	}
@@ -1253,7 +1253,7 @@ func TestActionRejectsUnquotedMultiWordText(t *testing.T) {
 // TestActionAcceptsQuotedMultiWordText keeps the documented quoted form working.
 func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "please add to the config"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 {
@@ -1267,7 +1267,7 @@ func TestActionAcceptsQuotedMultiWordText(t *testing.T) {
 // TestActionAcceptsTextAndGeneration keeps the full documented positional form working.
 func TestActionAcceptsTextAndGeneration(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello", "gen-1"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen-1" {
@@ -1281,7 +1281,7 @@ func TestActionAcceptsTextAndGeneration(t *testing.T) {
 // TestActionAcceptsGenerationFlagWithText proves the flag form frees the generation slot.
 func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
 	stub := &actionPathStub{}
-	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1"); err != nil {
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"send", "ep", "session", "hello"}, true, false, 100, "", "", "", "", "gen-1", ""); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	if len(stub.intents) != 1 || stub.intents[0].Target == nil || stub.intents[0].Target.ProviderGeneration != "gen-1" {
@@ -1293,7 +1293,7 @@ func TestActionAcceptsGenerationFlagWithText(t *testing.T) {
 // proves the error does not suggest quoting a message, because stop carries no message text.
 func TestActionRejectsExtraStopPositionals(t *testing.T) {
 	stub := &actionPathStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"stop", "ep", "session", "gen-1", "extra"}, true, false, 100, "", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
 		t.Fatalf("err=%v", err)
 	}
@@ -1305,6 +1305,214 @@ func TestActionRejectsExtraStopPositionals(t *testing.T) {
 	}
 	if len(stub.intents) != 0 {
 		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// resumeActionStub advertises agent.resume so the standalone resume tests can reach
+// the shared immutable-intent path without contacting a Server.
+//
+// It embeds actionPathStub and overrides only the capability set, following the
+// existing cleanActionStub pattern: the base stub already answers every other call,
+// so a second full stub would duplicate it and drift.
+type resumeActionStub struct {
+	actionPathStub
+}
+
+func (s *resumeActionStub) GetCapabilities(context.Context, string) (protocol.CapabilityDescriptor, error) {
+	return protocol.CapabilityDescriptor{Revision: "rev-resume", Capabilities: []protocol.Capability{{Name: protocol.OperationAgentResume}}}, nil
+}
+
+// TestActionResumeHandleFormCarriesHandle proves the -s form addresses the target by
+// provider session handle instead of a cluster resource ID.
+//
+// The handle form exists for a session the Endpoint has not discovered yet, so it has
+// no cluster resource ID at all. Asserting only "no error" would pass even if the
+// handle were dropped and the command addressed nothing, so the assertion names both
+// halves of the target: the handle is present and the resource ID is empty.
+func TestActionResumeHandleFormCarriesHandle(t *testing.T) {
+	stub := &resumeActionStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"resume", "ep"}, true, false, 100, "", "", "", "", "", "sad-1"); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents=%d, want 1", len(stub.intents))
+	}
+	target := stub.intents[0].Target
+	if target == nil {
+		t.Fatal("target is nil")
+	}
+	if target.ProviderSessionHandle != "sad-1" {
+		t.Fatalf("ProviderSessionHandle=%q, want sad-1", target.ProviderSessionHandle)
+	}
+	if target.ResourceID != "" {
+		t.Fatalf("ResourceID=%q, want empty: the handle form has no resource slot", target.ResourceID)
+	}
+}
+
+// TestActionResumeHandleFormRejectsPositionalResource proves a handle and a positional
+// resource cannot both name one target.
+//
+// Accepting both would leave the client choosing which one wins, and the loser would be
+// a target the operator named and the command ignored. The error must name the remedy,
+// because the operator's next attempt depends on knowing that the generation travels in
+// --generation for this form.
+func TestActionResumeHandleFormRejectsPositionalResource(t *testing.T) {
+	stub := &resumeActionStub{}
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"resume", "ep", "res_abc"}, true, false, 100, "", "", "", "", "", "sad-1")
+	if err == nil {
+		t.Fatal("expected an error for a handle plus a positional resource")
+	}
+	if !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("error must state that both forms cannot be combined: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--generation") {
+		t.Fatalf("error must name where the generation goes in this form: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("intents=%d, want 0", len(stub.intents))
+	}
+}
+
+// TestActionResumeHandleFormAcceptsGenerationFlag proves the handle form can still carry
+// an expected generation, through the flag rather than a positional.
+func TestActionResumeHandleFormAcceptsGenerationFlag(t *testing.T) {
+	stub := &resumeActionStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"resume", "ep"}, true, false, 100, "", "", "", "", "gen-1", "sad-1"); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+	target := stub.intents[0].Target
+	if target.ProviderSessionHandle != "sad-1" || target.ProviderGeneration != "gen-1" {
+		t.Fatalf("target=%+v, want handle sad-1 and generation gen-1", target)
+	}
+}
+
+// TestActionResumePositionalGenerationIsHonoured proves the documented positional form
+// carries its generation.
+//
+// resume has no text payload, so its only optional positional is the expected
+// generation. Reading that slot as text discarded it, which made the documented example
+// "resume <endpoint> <resource> <generation>" silently revalidate nothing: the command
+// succeeded while the Endpoint compared no generation at all.
+func TestActionResumePositionalGenerationIsHonoured(t *testing.T) {
+	stub := &resumeActionStub{}
+	if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"resume", "ep", "res_abc", "gen-1"}, true, false, 100, "", "", "", "", "", ""); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(stub.intents) != 1 || stub.intents[0].Target == nil {
+		t.Fatalf("intents=%+v", stub.intents)
+	}
+	target := stub.intents[0].Target
+	if target.ResourceID != "res_abc" {
+		t.Fatalf("ResourceID=%q, want res_abc", target.ResourceID)
+	}
+	if target.ProviderGeneration != "gen-1" {
+		t.Fatalf("ProviderGeneration=%q, want gen-1: the positional generation was discarded", target.ProviderGeneration)
+	}
+	if target.ProviderSessionHandle != "" {
+		t.Fatalf("ProviderSessionHandle=%q, want empty in the resource form", target.ProviderSessionHandle)
+	}
+}
+
+// TestReconcileSessionHandleRejectsDisagreement proves the two spellings cannot state
+// two different sessions.
+//
+// Resolving a disagreement by precedence would resume a session the operator did not
+// name, and the command would look successful. An empty spelling is absent rather than
+// a value, so "-s ''" cannot silently degrade into the resource form.
+func TestReconcileSessionHandleRejectsDisagreement(t *testing.T) {
+	cases := []struct {
+		name       string
+		short      string
+		long       string
+		want       string
+		wantErrSub string
+	}{
+		{name: "short only", short: "sad-1", want: "sad-1"},
+		{name: "long only", long: "sad-1", want: "sad-1"},
+		{name: "both agree", short: "sad-1", long: "sad-1", want: "sad-1"},
+		{name: "both absent", want: ""},
+		{name: "blank short is absent", short: "  ", long: "sad-1", want: "sad-1"},
+		{name: "disagree", short: "sad-1", long: "sad-2", wantErrSub: "disagree"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := reconcileSessionHandle(tc.short, tc.long)
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("err=%v, want it to contain %q", err, tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err=%v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHoistTrailingFlagsDoesNotHoistBareWord proves a positional word is never read as
+// an option.
+//
+// splitOptionName trims leading dashes, so a bare word matches an option of the same
+// name. Hoisting it moved the word in front of the subcommand, which then read it as the
+// command and reported `unknown command "session"` for a perfectly valid
+// "messages ep session". Every option name that can also be a positional value had this
+// defect, not only the newly added session.
+func TestHoistTrailingFlagsDoesNotHoistBareWord(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "bare word matching an option name stays positional",
+			args: []string{"messages", "ep", "session"},
+			want: []string{"messages", "ep", "session"},
+		},
+		{
+			name: "bare word matching a value option name stays positional",
+			args: []string{"messages", "ep", "task"},
+			want: []string{"messages", "ep", "task"},
+		},
+		{
+			name: "real option after the subcommand is still hoisted",
+			args: []string{"messages", "ep", "session", "--json"},
+			want: []string{"--json", "messages", "ep", "session"},
+		},
+		{
+			name: "value option after the subcommand takes its value",
+			args: []string{"messages", "ep", "session", "--max-tokens", "40"},
+			want: []string{"--max-tokens", "40", "messages", "ep", "session"},
+		},
+		{
+			name: "session flag after the subcommand is hoisted",
+			args: []string{"resume", "ep", "-s", "sad-1"},
+			want: []string{"-s", "sad-1", "resume", "ep"},
+		},
+		{
+			name: "terminator keeps the tail literal",
+			args: []string{"send", "ep", "session", "--", "--json"},
+			want: []string{"send", "ep", "session", "--", "--json"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hoistTrailingFlags(tc.args)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got=%q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got=%q, want %q", got, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -1332,7 +1540,7 @@ func TestStandaloneCleanBuildsExactIntent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &cleanActionStub{}
-			if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, tc.args, true, false, 100, "", "", "", "", ""); err != nil {
+			if err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, tc.args, true, false, 100, "", "", "", "", "", ""); err != nil {
 				t.Fatalf("clean: %v", err)
 			}
 			if len(stub.intents) != 1 {
@@ -1353,7 +1561,7 @@ func TestStandaloneCleanBuildsExactIntent(t *testing.T) {
 // reach admission without the shared --yes confirmation.
 func TestStandaloneCleanRequiresConfirmation(t *testing.T) {
 	stub := &cleanActionStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1"}, false, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1"}, false, false, 100, "", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "confirmation required for clean target=res-1") {
 		t.Fatalf("err=%v", err)
 	}
@@ -1366,7 +1574,7 @@ func TestStandaloneCleanRequiresConfirmation(t *testing.T) {
 // accidental argument as provider input or silently weakening exact targeting.
 func TestStandaloneCleanRejectsExtraPositionals(t *testing.T) {
 	stub := &cleanActionStub{}
-	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1", "gen-1", "extra"}, true, false, 100, "", "", "", "", "")
+	err := action(context.Background(), stub, &strings.Builder{}, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"clean", "ep-1", "res-1", "gen-1", "extra"}, true, false, 100, "", "", "", "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "unexpected arguments") || !strings.Contains(err.Error(), "extra") {
 		t.Fatalf("err=%v", err)
 	}
@@ -1401,7 +1609,7 @@ func TestStandaloneContextInjectPrintsProviderDocumentReadable(t *testing.T) {
 	document := `{"ok": true, "action": "btw", "delivery_state": "injection_queued"}`
 	stub := &providerDocumentStub{document: document}
 	var out strings.Builder
-	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("btw: %v", err)
 	}
 	rendered := out.String()
@@ -1430,7 +1638,7 @@ func TestStandaloneContextInjectJSONModeKeepsTheEnvelope(t *testing.T) {
 	document := `{"ok": true, "action": "btw"}`
 	stub := &providerDocumentStub{document: document}
 	var out strings.Builder
-	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, true, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, true, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("btw --json: %v", err)
 	}
 	var decoded map[string]any
@@ -1447,7 +1655,7 @@ func TestStandaloneContextInjectJSONModeKeepsTheEnvelope(t *testing.T) {
 func TestStandaloneContextInjectOmitsAbsentProviderDocument(t *testing.T) {
 	stub := &providerDocumentStub{}
 	var out strings.Builder
-	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", ""); err != nil {
+	if err := action(context.Background(), stub, &out, strings.NewReader(""), io.Discard, tui.ColorPolicy{}, []string{"btw", "ep", "session", "context text", "gen"}, true, false, 100, "", "", "", "", "", ""); err != nil {
 		t.Fatalf("btw: %v", err)
 	}
 	if strings.Contains(out.String(), "provider_response") {

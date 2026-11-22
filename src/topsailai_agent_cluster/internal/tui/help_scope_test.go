@@ -367,7 +367,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 		"agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] start <endpoint> <resource> [text] [generation]",
-		"agent-cluster-cli [options] resume <endpoint> <resource> [text] [generation]",
+		"agent-cluster-cli [options] resume <endpoint> <resource> [generation] | resume <endpoint> -s <session-id> [--generation <generation>]",
 		"agent-cluster-cli [options] stop <endpoint> <resource> <generation>",
 		"agent-cluster-cli help [command]",
 	} {
