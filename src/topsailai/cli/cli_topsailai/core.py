@@ -53,8 +53,12 @@ from cli_topsailai.projects import (
     load_projects,
     print_project_table,
 )
+from cli_topsailai.version import (
+    get_version_string,
+)
 
-__version__ = "0.1.0"
+# The build identity comes from the packaging-generated ``version`` record, so
+# this module never hardcodes a version. See ``cli_topsailai.version``.
 
 # Tracks whether the project scope is showing session-based projects
 # ("sessions") or the managed project list ("managed").
@@ -1754,7 +1758,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     _TOP_LEVEL_COMMANDS = {"workspace", "docs", "project", "models", "runtime", "session"}
     _TOP_LEVEL_OPTIONS = {
-        "-h", "--help", "--version", "-w", "--workspace",
+        "-h", "--help", "--version", "-v", "-w", "--workspace",
         "--list-docs", "--read-doc", "-t", "--tui", "--runtime-tui",
         "-n", "--tail-lines", "-m", "--agent-mode",
     }
@@ -1800,7 +1804,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             help="show this help message and exit",
         )
         help_parser.add_argument(
-            "--version",
+            "-v", "--version",
             action="store_true",
             dest="version",
             help="show program's version number and exit",
@@ -1922,7 +1926,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="show this help message and exit",
     )
     parser.add_argument(
-        "--version",
+        "-v", "--version",
         action="store_true",
         dest="version",
         help="show program's version number and exit",
@@ -2205,7 +2209,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser.print_help()
         sys.exit(0)
     if args.version:
-        print(f"{parser.prog} {__version__}")
+        print(f"{parser.prog} {get_version_string()}")
         sys.exit(0)
 
     # Backward-compatible deprecated options.

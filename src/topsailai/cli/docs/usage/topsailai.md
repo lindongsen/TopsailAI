@@ -63,10 +63,34 @@ These options apply only to the default interactive mode (no subcommand). They c
 | Option | Description |
 |--------|-------------|
 | `-h`, `--help` | Show help message and exit. |
-| `--version` | Show program version and exit. |
+| `-v`, `--version` | Show the build version and exit. The value comes from the packaging-generated `version` record beside the package root, so it names the exact build the CLI belongs to. A source checkout has no record and reports `dev`. |
 | `-t`, `--tui`, `--runtime-tui` | Use the two-pane curses UI when watching a log. |
 | `-n N`, `--tail-lines N` | Number of recent log lines to echo on startup in runtime mode (default: 300). |
 | `-m [MODE]`, `--agent-mode [MODE]` | raw \| dtach \| tmux. When omitted, auto-detect: tmux if available, else dtach if available, else raw. |
+
+## Build Version
+
+`-v` / `--version` prints one line, `topsailai.py <version>`, and exits `0`. The value is read from a `version` record that the packaging tool generates beside the package root, so the CLI reports the exact build it was shipped in rather than a hand-maintained constant.
+
+The record is a JSON object:
+
+```json
+{
+  "schema_version": 1,
+  "package": "topsailai",
+  "version": "20261122085959+c3fbc696",
+  "commit": "c3fbc696"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `schema_version` | Record format version. An unknown value warns on stderr but the known fields are still read. |
+| `package` | Package the record describes, so one format serves several packages. |
+| `version` | The build identity, and the same string the deb package declares as its `Version`. It is the build timestamp with the commit appended after `+`, so `dpkg -l` shows both. |
+| `commit` | The git commit the build came from. Omitted when the build had no git metadata; a missing key is not an error. |
+
+The record is a build artifact and is absent in a source checkout, where the CLI reports `dev`. A version request never fails: an absent, unreadable, oversized, or malformed record logs one `[WARN]` line on stderr and falls back to `dev`, so stdout stays a single parseable line. The record is read only when `-v` / `--version` is requested, so interactive startup pays nothing.
 
 ## Scopes
 

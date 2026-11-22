@@ -214,8 +214,8 @@ log "Removed ${CONTAINER_DIR}/${CORE_NAME} and ${CONTAINER_DIR}/${DATA_NAME} ins
 # ---------------------------------------------------------------------------
 if [ "${DO_VERIFY}" -eq 1 ]; then
   log "Verifying installed versions ..."
-  CORE_TS=$(basename "${DEB_CORE}" | sed -E 's/^topsailai-([0-9]+)\.deb$/\1/')
-  DATA_TS=$(basename "${DEB_DATA}" | sed -E 's/^topsailai-data-([0-9]+)\.deb$/\1/')
+  CORE_TS=$(basename "${DEB_CORE}" | sed -E 's/^topsailai-([0-9][^.]*)\.deb$/\1/')
+  DATA_TS=$(basename "${DEB_DATA}" | sed -E 's/^topsailai-data-([0-9][^.]*)\.deb$/\1/')
 
   INSTALLED_CORE=$(docker exec "${CONTAINER}" dpkg-query -W -f='${Version}' topsailai 2>/dev/null || true)
   INSTALLED_DATA=$(docker exec "${CONTAINER}" dpkg-query -W -f='${Version}' topsailai-data 2>/dev/null || true)

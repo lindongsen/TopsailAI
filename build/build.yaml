@@ -8,6 +8,7 @@ topsailai:
       - topsailai_server
       - topsailai_data
     lib_home: '/TopsailAI/src'
+  version_file: 'topsailai/version'
   non-src:
     'pyproject.toml': '/TopsailAI/pyproject.toml'
     'uv.lock': '/TopsailAI/uv.lock'
