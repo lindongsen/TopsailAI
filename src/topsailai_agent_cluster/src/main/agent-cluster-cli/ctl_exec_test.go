@@ -228,14 +228,15 @@ func TestExecCommandKeepsFlagLikeArguments(t *testing.T) {
 // TestExecCommandRejectsMalformedArguments proves every malformed form fails
 // before admission, including a missing separator and a missing generation.
 func TestExecCommandRejectsMalformedArguments(t *testing.T) {
+	usage := "usage: exec <endpoint-id> <resource-id> <generation> -- <argv...> | exec <endpoint-id> -- <argv...>"
 	cases := []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "no separator", args: []string{"exec", "ep", "session", "gen", "ls"}, want: "usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>"},
-		{name: "no argv", args: []string{"exec", "ep", "session", "gen", "--"}, want: "usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>"},
-		{name: "missing target", args: []string{"exec", "ep", "--", "ls"}, want: "usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>"},
+		{name: "no separator", args: []string{"exec", "ep", "session", "gen", "ls"}, want: usage},
+		{name: "no argv", args: []string{"exec", "ep", "session", "gen", "--"}, want: usage},
+		{name: "no endpoint", args: []string{"exec", "--", "ls"}, want: usage},
 		{name: "misplaced flag", args: []string{"exec", "ep", "session", "--json", "--", "ls"}, want: `option "--json" must be written before the command; run help exec for valid syntax`},
 		{name: "surplus head", args: []string{"exec", "ep", "session", "gen", "extra", "--", "ls"}, want: `unexpected arguments "extra"; run help exec for valid syntax`},
 		{name: "missing generation", args: []string{"exec", "ep", "session", "--", "ls"}, want: "exec requires a generation; run help exec for valid syntax"},
@@ -366,5 +367,127 @@ func TestSubmitActionEnrichesKnownProviderTarget(t *testing.T) {
 	}
 	if got, want := target.ProviderGeneration, "explicit-generation"; got != want {
 		t.Fatalf("provider_generation=%q want=%q", got, want)
+	}
+}
+
+// TestExecCommandEndpointFormAdmitsTargetlessIntent proves the endpoint form
+// submits command.exec with no target at all.
+//
+// The interactive "!" prefix already runs on the machine itself in endpoint
+// scope, and the Endpoint already serves a target-less command.exec by resolving
+// the working directory from its own configuration. Without this form the same
+// allowlisted command was reachable only from the REPL, so a script could not run
+// what the operator could. The intent must carry no target, because inventing one
+// would address a session that does not exist.
+func TestExecCommandEndpointFormAdmitsTargetlessIntent(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	args := []string{"exec", "ep", "--", "git", "status", "--short"}
+	if err := execCommand(context.Background(), stub, &strings.Builder{}, args, true, false, 100, ""); err != nil {
+		t.Fatalf("execCommand: %v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(stub.intents))
+	}
+	intent := stub.intents[0]
+	if intent.Operation != protocol.OperationCommandExec {
+		t.Fatalf("operation = %q, want %q", intent.Operation, protocol.OperationCommandExec)
+	}
+	if intent.EndpointID != "ep" {
+		t.Fatalf("endpoint = %q, want ep", intent.EndpointID)
+	}
+	if intent.Target != nil {
+		t.Fatalf("target = %+v, want nil: the endpoint form addresses the machine, not a session", intent.Target)
+	}
+	var request protocol.CommandExecRequest
+	if err := json.Unmarshal(intent.Payload, &request); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	want := []string{"git", "status", "--short"}
+	if len(request.Argv) != len(want) {
+		t.Fatalf("argv = %q, want %q", request.Argv, want)
+	}
+	for index := range want {
+		if request.Argv[index] != want[index] {
+			t.Fatalf("argv = %q, want %q", request.Argv, want)
+		}
+	}
+}
+
+// TestExecCommandEndpointFormRefusesGeneration proves a generation supplied with
+// the endpoint form is refused instead of ignored.
+//
+// The endpoint form addresses no process, so there is nothing to revalidate. A
+// silently discarded generation would look like a revalidation that never
+// happened, which is the same defect class as the resume positional generation
+// that was consumed as a discarded text payload.
+func TestExecCommandEndpointFormRefusesGeneration(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	err := execCommand(context.Background(), stub, &strings.Builder{}, []string{"exec", "ep", "--", "ls"}, true, false, 100, "gen-1")
+	if err == nil || !strings.Contains(err.Error(), "takes no generation") {
+		t.Fatalf("error = %v, want a refusal that names the generation", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("a generation on the endpoint form admitted %d commands", len(stub.intents))
+	}
+}
+
+// TestExecCommandEndpointFormKeepsFlagLikeArguments proves the endpoint form still
+// treats everything after the separator as literal argv, so a dash argument is not
+// mistaken for a misplaced option.
+func TestExecCommandEndpointFormKeepsFlagLikeArguments(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	if err := execCommand(context.Background(), stub, &strings.Builder{}, []string{"exec", "ep", "--", "ls", "-la"}, true, false, 100, ""); err != nil {
+		t.Fatalf("execCommand: %v", err)
+	}
+	var request protocol.CommandExecRequest
+	if err := json.Unmarshal(stub.intents[0].Payload, &request); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(request.Argv) != 2 || request.Argv[1] != "-la" {
+		t.Fatalf("argv = %q, want [ls -la]", request.Argv)
+	}
+}
+
+// TestExecCommandEndpointFormRequiresConfirmation proves the endpoint form is
+// still a mutating command and names the machine in the question.
+//
+// A confirmation that names no target is not a confirmation, and this form has no
+// resource ID to name, so the question must name the endpoint instead of printing
+// an empty target.
+func TestExecCommandEndpointFormRequiresConfirmation(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	err := execCommand(context.Background(), stub, &strings.Builder{}, []string{"exec", "ep", "--", "ls"}, false, false, 100, "")
+	if err == nil || !strings.Contains(err.Error(), "confirmation required for exec") {
+		t.Fatalf("error = %v, want a confirmation requirement", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "target=endpoint=ep") {
+		t.Fatalf("confirmation must name the endpoint: %v", err)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("unconfirmed endpoint exec admitted %d commands", len(stub.intents))
+	}
+}
+
+// TestExecHelpAdvertisesTheEndpointForm proves the help surface states both forms
+// the dispatcher accepts.
+//
+// The dispatcher and the help are two separate sources of truth: one decides what
+// runs, the other decides what an operator believes runs. A form accepted but not
+// advertised is undiscoverable, and a form advertised but not accepted is a promise
+// the binary cannot keep.
+func TestExecHelpAdvertisesTheEndpointForm(t *testing.T) {
+	var output strings.Builder
+	if err := tui.PrintNonInteractiveCommandHelp(&output, "exec"); err != nil {
+		t.Fatal(err)
+	}
+	help := output.String()
+	for _, want := range []string{
+		"exec <endpoint> <resource> <generation> -- <argv...>",
+		"exec <endpoint> -- <argv...>",
+		"exec endpoint-1 -- git status",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("standalone exec help does not advertise %q:\n%s", want, help)
+		}
 	}
 }

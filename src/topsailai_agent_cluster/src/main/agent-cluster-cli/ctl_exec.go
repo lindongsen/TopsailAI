@@ -78,7 +78,8 @@ func ctlCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, dia
 	}, jsonMode)
 }
 
-// execCommand submits one allowlisted argv array for an exact session.
+// execCommand submits one allowlisted argv array for an exact session or for the
+// Endpoint itself.
 //
 // The argv array is taken from the shell's own word splitting, so it is never
 // re-tokenized here: re-splitting a string would reintroduce the shell semantics
@@ -90,7 +91,26 @@ func execCommand(ctx context.Context, api tui.CommandAPI, output io.Writer, args
 
 // execCommandWithProgress is execCommand with a diagnostics stream for progress
 // lines. A nil diagnostics stream keeps the previous silent behaviour.
+//
+// Two forms are accepted, and the head length decides which one applies:
+//
+//	exec <endpoint> <resource> <generation> -- <argv...>   session target
+//	exec <endpoint> -- <argv...>                           endpoint target
+//
+// The endpoint form exists because the interactive "!" prefix already runs on the
+// machine itself when the operator is in endpoint scope, and the Endpoint already
+// serves a target-less command.exec: it resolves the working directory from its
+// own configuration instead of from a session. Without this form a machine-level
+// command was reachable only from the REPL, so a script could not run the same
+// allowlisted command the operator could.
+//
+// The two forms are distinguished by the head length rather than by a flag,
+// because the endpoint is always the first positional and a session target always
+// names a resource after it. A head of exactly one element therefore cannot be a
+// session form missing its resource, and a head of two or more cannot be the
+// endpoint form, so no input is ambiguous between them.
 func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, diagnostics io.Writer, args []string, confirmed, jsonMode bool, waitTimeoutMS int64, generationFlag string) error {
+	usage := "usage: exec <endpoint-id> <resource-id> <generation> -- <argv...> | exec <endpoint-id> -- <argv...>"
 	separator := -1
 	for index, arg := range args {
 		if arg == "--" {
@@ -99,16 +119,40 @@ func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 		}
 	}
 	if separator < 0 {
-		return fmt.Errorf("usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>")
+		return fmt.Errorf("%s", usage)
 	}
 	head, argv := args[1:separator], args[separator+1:]
-	if len(head) < 2 || len(argv) == 0 {
-		return fmt.Errorf("usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>")
+	if len(head) < 1 || len(argv) == 0 {
+		return fmt.Errorf("%s", usage)
 	}
 	if err := rejectMisplacedFlags(args[0], head); err != nil {
 		return err
 	}
-	endpointID, resourceID := head[0], head[1]
+	endpointID := head[0]
+	// A single head element addresses the machine. It carries no resource and no
+	// generation, because there is no session identity to name and no process to
+	// prove; the Endpoint resolves the working directory from its own
+	// configuration. A generation supplied here is refused rather than ignored,
+	// because a silently discarded generation would look like a revalidation that
+	// never happened.
+	if len(head) == 1 {
+		if generationFlag != "" {
+			return fmt.Errorf("exec on an endpoint addresses no process, so it takes no generation; drop --generation or name a session resource; run help exec for valid syntax")
+		}
+		payload, err := tui.ExecPayload(argv)
+		if err != nil {
+			return err
+		}
+		return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
+			Operation:      protocol.OperationCommandExec,
+			OperationLabel: "exec",
+			EndpointID:     endpointID,
+			Payload:        payload,
+			Confirmed:      confirmed,
+			WaitTimeoutMS:  waitTimeoutMS,
+		}, jsonMode)
+	}
+	resourceID := head[1]
 	generation := generationFlag
 	if generation == "" && len(head) >= 3 {
 		generation = head[2]

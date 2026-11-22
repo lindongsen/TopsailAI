@@ -458,10 +458,10 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		// because the interactive form is the "!" input prefix. It therefore has
 		// no scope-matrix entry, and its description is supplied here instead of
 		// in the catalog, which must stay one-to-one with the matrix.
-		entry.syntax = "agent-cluster-cli [options] exec <endpoint> <resource> <generation> -- <argv...>"
-		entry.description = "run one allowlisted command in the session working directory; the argv array is taken from the shell's own word splitting and is never re-tokenized, and the allowlist decision is made by the endpoint. This standalone form requires a session target; the interactive ! prefix also runs on the endpoint itself when the operator is in endpoint scope"
-		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID", "generation: target generation", "--: separates the target from the argv array", "argv: program and arguments; the program must be allowlisted by the endpoint", "--json: write the structured receipt instead of the rendered one"}
-		entry.examples = []string{"exec endpoint-1 res_abc gen-1 -- git status", "exec endpoint-1 res_abc gen-1 -- ls -la"}
+		entry.syntax = "agent-cluster-cli [options] exec <endpoint> <resource> <generation> -- <argv...> | exec <endpoint> -- <argv...>"
+		entry.description = "run one allowlisted command; the argv array is taken from the shell's own word splitting and is never re-tokenized, and the allowlist decision is made by the endpoint. Naming a resource runs the command in that session's working directory; naming only the endpoint runs it on the machine itself, in the endpoint-configured command directory, which is the same form the interactive ! prefix uses in endpoint scope"
+		entry.parameters = []string{"endpoint: endpoint ID", "resource: session/resource ID; omit it to run on the endpoint itself", "generation: target generation; required with a resource, and refused without one because an endpoint addresses no process", "--: separates the target from the argv array", "argv: program and arguments; the program must be allowlisted by the endpoint", "--json: write the structured receipt instead of the rendered one"}
+		entry.examples = []string{"exec endpoint-1 res_abc gen-1 -- git status", "exec endpoint-1 res_abc gen-1 -- ls -la", "exec endpoint-1 -- git status"}
 	case "help":
 		entry.syntax = "agent-cluster-cli help [command]"
 	case "interactive":

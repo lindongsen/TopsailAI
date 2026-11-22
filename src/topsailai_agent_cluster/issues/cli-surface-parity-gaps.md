@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: partially-fixed
+status: fixed
 ---
 
 # Interactive and non-interactive command surfaces are not fully aligned
@@ -82,16 +82,35 @@ Two latent defects were found and fixed in the same unit:
   printed `target=` and asked the operator to confirm a mutating command without naming the session.
   The shared layer now names whichever identity the request carries, which fixes both surfaces.
 
-### 3. Endpoint-scope `command.exec` has no standalone spelling
+### 3. Endpoint-scope `command.exec` has no standalone spelling — FIXED
 
 Interactive `!` runs in session scope and in endpoint scope; endpoint scope sends a target-less
 intent (`internal/tui/interactive_shell.go:220-250`, `requireShellScope`). Standalone `exec`
-requires `<endpoint> <resource> <generation> -- <argv...>` and refuses without a resource
-(`src/main/agent-cluster-cli/ctl_exec.go:105-121`). The standalone help states the asymmetry
+required `<endpoint> <resource> <generation> -- <argv...>` and refused without a resource
+(`src/main/agent-cluster-cli/ctl_exec.go:105-121`). The standalone help stated the asymmetry
 explicitly (`internal/tui/help.go`, `exec` entry).
 
-Impact: the machine-scoped form of `command.exec` is unreachable from a script, even though the
+Impact: the machine-scoped form of `command.exec` was unreachable from a script, even though the
 Endpoint serves it and the capability is advertised.
+
+Resolution: standalone `exec` now accepts `exec <endpoint> -- <argv...>` and submits a target-less
+intent. This was a client-side wiring gap only. `PrepareAction` already returned a target-less intent
+for `command.exec` when neither a resource nor a handle was set
+(`internal/tui/command_actions.go:93-100`), and the Endpoint already served that shape through
+`endpointCommandAdapter` (`internal/endpoint/executor.go:572`) and `targetKey`
+(`internal/endpoint/executor.go:675-677`), resolving the working directory from
+`AGENT_CLUSTER_ENDPOINT_COMMAND_DIR`. No protocol, Server, Endpoint or Provider change was needed.
+
+The two forms are distinguished by the head length rather than by a flag, because the endpoint is
+always the first positional and a session target always names a resource after it, so no input is
+ambiguous between them. A generation supplied with the endpoint form is refused rather than ignored,
+because the endpoint addresses no process and a silently discarded generation would look like a
+revalidation that never happened.
+
+A shared-layer defect was fixed in the same unit: `confirmationTargetLabel` now names the endpoint
+when a request carries neither a resource nor a handle, so the endpoint form asks
+`target=endpoint=ep` instead of printing an empty `target=`. That label is shared by both surfaces,
+so the interactive endpoint-scope `!` confirmation was corrected by the same change.
 
 ## Deliberate exceptions, not gaps
 
@@ -121,7 +140,18 @@ one, because it reads as a complete verification.
 
 ## Status
 
-Gap 1 fixed and verified. Gap 2 fixed and verified. Gap 3 recorded, not fixed.
+Gap 1 fixed and verified. Gap 2 fixed and verified. Gap 3 fixed and verified.
+
+Gap 3 evidence: `make test-unit-cli` green (`internal/client`, `internal/tui`,
+`src/main/agent-cluster-cli`), `go build ./...` clean, `go vet` clean. The new tests were proven to
+fail when each guard was deliberately broken: making the endpoint form carry a resource failed the
+target-less assertion with `target = &{Kind:session ResourceID:invented ...}, want nil`, removing the
+generation refusal failed with `error = <nil>, want a refusal that names the generation`, dropping the
+endpoint from `confirmationTargetLabel` failed with `confirmation required for exec target=`, and
+removing the endpoint form from the help syntax failed the advertisement test. The real binary was
+driven end to end: `exec ep -- ls` prints `confirmation required for exec target=endpoint=ep`,
+`exec ep --generation gen-1 -- ls` is refused, `exec ep res_abc -- ls` still requires a generation, and
+`exec -- ls` reports the two-form usage.
 
 Gap 2 evidence: `make test-unit-cli` green (`internal/client`, `internal/tui`,
 `src/main/agent-cluster-cli`), `go build ./...` clean, `go vet` clean. The new tests were proven to

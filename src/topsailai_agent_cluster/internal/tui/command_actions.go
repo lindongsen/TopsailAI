@@ -49,18 +49,24 @@ type ActionResult struct {
 
 // confirmationTargetLabel names the target a confirmation question is about.
 //
-// A target can be named by a cluster resource ID or by a provider session handle,
-// and the handle form has no resource ID at all. Reporting only the resource ID
-// therefore printed "target=" for a resume by handle, so the operator was asked to
-// confirm a mutating command without being told which session it would reach. The
-// label states whichever identity the request actually carries, and names the
-// handle explicitly so the two forms are never confused in the question.
+// A target can be named by a cluster resource ID, by a provider session handle,
+// or by nothing at all when the operation addresses the Endpoint itself. The
+// handle form has no resource ID, and a target-less operation has neither, so
+// reporting only the resource ID printed "target=" and asked the operator to
+// confirm a mutating command without being told what it would reach. The label
+// states whichever identity the request actually carries, and names the handle
+// explicitly so the two resource forms are never confused in the question. A
+// target-less request names the machine, because that is the only thing the
+// command can act on.
 func confirmationTargetLabel(request ActionRequest) string {
 	if request.ResourceID != "" {
 		return request.ResourceID
 	}
 	if request.ProviderSessionHandle != "" {
 		return "session=" + request.ProviderSessionHandle
+	}
+	if request.EndpointID != "" {
+		return "endpoint=" + request.EndpointID
 	}
 	return ""
 }
