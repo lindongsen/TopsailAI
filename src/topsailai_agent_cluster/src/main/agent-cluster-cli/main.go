@@ -378,8 +378,24 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		return messages(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), messageBound, tokenBound, *jsonMode, tui.OutputColorPolicy(output))
 	case "model":
+		// The read form stays the default so an existing invocation keeps working.
+		// A subcommand is recognised only as the first argument, because an endpoint
+		// identifier could legitimately be named "set" and the read form takes an
+		// endpoint first.
+		if flags.NArg() >= 2 && flags.Arg(1) == "registry" {
+			if flags.NArg() != 3 {
+				return fmt.Errorf("usage: model registry <endpoint-id-or-hostname>")
+			}
+			return modelRegistry(ctx, api, output, errors, flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
+		}
+		if flags.NArg() >= 2 && flags.Arg(1) == "set" {
+			if flags.NArg() != 4 {
+				return fmt.Errorf("usage: model set <endpoint-id-or-hostname> <model-profile-id-or-name>")
+			}
+			return modelSet(ctx, api, output, errors, flags.Arg(2), flags.Arg(3), *confirmed, *jsonMode, *waitTimeoutMS)
+		}
 		if flags.NArg() < 3 || flags.NArg() > 4 {
-			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile]")
+			return fmt.Errorf("usage: model <endpoint-id-or-hostname> <session-id> [profile] | model registry <endpoint-id-or-hostname> | model set <endpoint-id-or-hostname> <model-profile-id-or-name>")
 		}
 		if flags.NArg() == 3 {
 			return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))

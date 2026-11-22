@@ -402,14 +402,19 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.examples = []string{"messages endpoint-1 20261013131753", "messages ai-dev 20261013131753 --max-chars 2000", "messages ai-dev 20261013131753 -c 2000", "messages ai-dev 20261013131753 --max-tokens 500"}
 	case "model":
 		// The standalone form has no current endpoint and no rendered table, so
-		// it states both mandatory arguments and never accepts a row number: a
+		// it states the mandatory arguments and never accepts a row number: a
 		// profile number only exists after an interactive render. The optional
 		// third argument applies one profile, and it is named by
 		// model_profile_id or display name because no table was rendered here.
-		entry.syntax = "agent-cluster-cli [options] model <endpoint-id-or-hostname> <session-id> [profile]"
-		entry.description = "list the model profiles one session can select, or apply one profile to that session; the read is a live provider query, never a persisted projection"
-		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "session-id: session/resource ID or provider session ID; a row number is not accepted, because a row number only exists after an interactive render", "profile: optional model_profile_id or display name; a row number is not accepted here for the same reason, and the selector is resolved against a live catalog read so an unknown profile is rejected instead of submitted", "applying a profile is mutating and requires --yes, and it carries the session generation so a replaced session is refused instead of retargeted", "--json: write the catalog document instead of the rendered table"}
-		entry.examples = []string{"model endpoint-1 res_abc", "model ai-dev 20261013131753", "model endpoint-1 res_abc claude-sonnet"}
+		//
+		// The two subcommands are the machine-scoped forms the interactive surface
+		// reaches with a bare "model" outside session scope and with "model set".
+		// They are advertised here because the dispatcher accepts them: a syntax the
+		// binary rejects would make this help a promise it cannot keep.
+		entry.syntax = "agent-cluster-cli [options] model <endpoint-id-or-hostname> <session-id> [profile] | model registry <endpoint-id-or-hostname> | model set <endpoint-id-or-hostname> <model-profile-id-or-name>"
+		entry.description = "list the models one endpoint offers to launches and mark the one in use, declare which one a launch from that endpoint should use, list the model profiles one session can select, or apply one profile to that session; every read is a live provider query, never a persisted projection"
+		entry.parameters = []string{"endpoint-id-or-hostname: endpoint to query; a hostname shared by several endpoints is rejected with the candidate list", "session-id: session/resource ID or provider session ID; a row number is not accepted, because a row number only exists after an interactive render", "profile: optional model_profile_id or display name; a row number is not accepted here for the same reason, and the selector is resolved against a live catalog read so an unknown profile is rejected instead of submitted", "applying a profile is mutating and requires --yes, and it carries the session generation so a replaced session is refused instead of retargeted", "registry: read the models a launch from this endpoint can use and mark the one a launch would use now; it addresses the machine, so it takes no session", "set: declare which model a launch from this endpoint should use; it changes a machine-wide declaration rather than a running process, so it takes no session and no generation, and it is mutating so it requires --yes", "set resolves a model_profile_id or display name against a live registry read, so an unknown or unavailable model is refused before anything is submitted; a row number is rejected because no table was rendered here", "--json: write the catalog or registry document instead of the rendered table"}
+		entry.examples = []string{"model endpoint-1 res_abc", "model ai-dev 20261013131753", "model endpoint-1 res_abc claude-sonnet", "model registry endpoint-1", "model registry ai-dev", "--yes model set endpoint-1 claude-sonnet"}
 	case "endpoints":
 		entry.syntax = "agent-cluster-cli [options] [--endpoint <id>] endpoints [endpoint-id]"
 	case "send":

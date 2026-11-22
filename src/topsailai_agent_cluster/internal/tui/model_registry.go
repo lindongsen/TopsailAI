@@ -265,3 +265,42 @@ func ModelSetPayload(modelProfileID string) (json.RawMessage, error) {
 	}
 	return encoded, nil
 }
+
+// ResolveModelRegistrySelector resolves one selector against a registry view.
+//
+// The standalone surface has no rendered table, so it passes the view it just built
+// from a live read. That keeps one resolution rule for both surfaces: a selector only
+// ever resolves against a registry that was actually read, never against a guess.
+//
+// A row number is still accepted, because the view carries the numbers the renderer
+// would have printed. A standalone caller therefore resolves a number against the
+// table it just printed, exactly as the interactive surface resolves it against the
+// table the operator last saw.
+func ResolveModelRegistrySelector(view ModelRegistryView, token string) (ModelRegistryViewRow, error) {
+	namespace := &modelRegistryNamespace{
+		EndpointID: view.EndpointID,
+		Rows:       make(map[int]ModelRegistryViewRow, len(view.Rows)),
+	}
+	for _, row := range view.Rows {
+		namespace.Rows[row.No] = row
+	}
+	return resolveModelSetSelector(namespace, token)
+}
+
+// ModelRegistryError maps a standard registry error code to an operator message.
+//
+// It is exported for the same reason ModelCatalogError is: the standalone surface must
+// report an unsupported adapter and an unresolvable selection as two different
+// outcomes, and a second mapping would let the two surfaces disagree about which one
+// the operator sees.
+func ModelRegistryError(endpointID, code string) error {
+	return modelRegistryError(endpointID, code)
+}
+
+// ModelRegistryRowLabel names one registry row in operator-facing text.
+//
+// It is exported so a standalone refusal names the model the same way the interactive
+// confirmation does, instead of printing a bare opaque identifier.
+func ModelRegistryRowLabel(row ModelRegistryViewRow) string {
+	return modelRegistryRowLabel(row)
+}
