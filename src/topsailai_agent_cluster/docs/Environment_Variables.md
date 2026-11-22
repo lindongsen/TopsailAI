@@ -280,10 +280,14 @@ and `#` comments are ignored.
 
 Programs that can execute other programs require at least two tokens, because a
 single-token entry would authorise the whole program. The rejected set is `git`,
-`find`, `awk`, `sed`, `xargs`, `env`, `make`, `docker`, `kubectl`, `sh`, `bash`,
+`find`, `awk`, `sed`, `xargs`, `env`, `docker`, `kubectl`, `sh`, `bash`,
 `python`, `python3`, `perl`, `ruby` and `node`. Such an entry is rejected when the
 file is loaded, so a configuration mistake fails at startup rather than at the first
 execution.
+
+`make` is deliberately not in that set, so the shipped policy can carry one bare
+`make` entry that permits every target, including a bare `make` with no target at
+all. See the shipped-default table below for the accepted breadth of that entry.
 
 An unset value disables command execution entirely. The Endpoint refuses
 `command.exec` with an explicit error rather than falling back to an unrestricted
@@ -304,15 +308,15 @@ node and prepare a workspace, grouped by purpose:
 | Network diagnostics | `ping`, `nc`, `ss`, `netstat` |
 | Filesystem mutation | `mkdir`, `touch` |
 | Git | `git status`, `git log`, `git diff`, `git show`, `git push`, `git pull`, `git fetch` |
-| Make test entry points | `make test-unit`, `make test-unit-common`, `make test-unit-server`, `make test-unit-endpoint`, `make test-unit-cli`, `make test-provider-schema`, `make test-conformance`, `make test-provider-topsailai`, `make test-provider-topsailai-conformance`, `make test-bdd`, `make test-integration`, `make test-packaging`, `make test-harness`, `make test-live-smoke`, `make test-live-smoke-modes`, `make test`, `make test-all`, `make test-clean`, `make bdd`, `make integration` |
+| Make | `make` (one bare entry, so every target is permitted, including a bare `make` with no target) |
 
-The `make` group exists because the project's recorded rule is that component-level and
-larger test runs go through a `make` target rather than an ad-hoc `go test` invocation, so
-the operator surface cannot follow that rule while `make` is unreachable. `make` can execute
-another program, so a bare `make` entry is rejected at load time and every target is named
-instead. Prefix matching compares tokens for equality, so one entry covers exactly one target
-and an unlisted target stays refused. Build, packaging, image and service targets are
-deliberately absent, because this group exists for the test entry points.
+The `make` entry is deliberately one bare token rather than a list of targets. The
+operator requires every target to be reachable, including a bare `make` that runs the
+default goal, so `make` is not in the loader's command-executing set and a
+single-token entry is accepted. The consequence is that the entry also permits
+`make -f <file>` and `make -C <dir>`, which run a Makefile outside the session
+directory. That breadth is accepted for the same reason `git pull` is accepted: both
+run code the operator did not write in this session.
 
 Destructive entries are deliberately absent: `rm`, `mv`, `cp`, `dd`, `kill`,
 `truncate` and the package managers are not listed, so this surface cannot delete or
@@ -331,9 +335,10 @@ The default is not a sandbox. `git push` accepts `--receive-pack` and
 driver; `git show` honours `--output` and textconv filters declared in
 `.gitattributes`; `hostname NAME` renames the machine when the Endpoint runs as root;
 `nc` can listen, connect and transfer arbitrary data; `ping -f` floods a target;
-`mkdir`/`touch` create entries in the session directory; and `make <target>` runs the
-Makefile in the session working directory with the Endpoint's authority, so a modified
-Makefile is arbitrary code execution. Prefix matching cannot distinguish those forms, so an
+`mkdir`/`touch` create entries in the session directory; and the bare `make` entry
+runs the Makefile in the session working directory with the Endpoint's authority, so a
+modified Makefile is arbitrary code execution, while `make -f` and `make -C` reach a
+Makefile outside that directory. Prefix matching cannot distinguish those forms, so an
 entry is only as narrow as its first tokens and every entry is reachable by anyone holding
 the `control` scope.
 

@@ -38,14 +38,14 @@ an operator needs to inspect a node and prepare a workspace: read-only inspectio
 (`ls`, `cat`, `grep`, `du`, `df`, `free`, `ps`, `uname`, `id`, `date`, `lscpu`,
 `lsblk`, `hostname` and similar), network diagnostics (`ping`, `nc`, `ss`,
 `netstat`), filesystem mutation confined to the session directory (`mkdir`,
-`touch`), the git entries needed to publish work, and the `make` test targets that are the
-project's single test entry point (`make test-unit`, `make test-unit-<component>`,
-`make test-bdd`, `make test-integration`, `make test-packaging`, `make test-harness`,
-`make test-all` and their aliases). Destructive programs (`rm`,
-`mv`, `cp`, `dd`, `kill`, `truncate`, package managers) are deliberately absent.
-That default is not a sandbox: it includes `git push`, `git pull`, `git fetch`,
-`hostname`, `nc`, `ping` and `make`, whose permissive forms are recorded in
-`conf/command-allowlist.conf.example`.
+`touch`), the git entries needed to publish work, and one bare `make` entry that
+permits every target, including a bare `make` with no target at all. Destructive
+programs (`rm`, `mv`, `cp`, `dd`, `kill`, `truncate`, package managers) are
+deliberately absent. That default is not a sandbox: it includes `git push`,
+`git pull`, `git fetch`, `hostname`, `nc`, `ping` and `make`, whose permissive
+forms are recorded in `conf/command-allowlist.conf.example`. The `make` entry is
+deliberately broad rather than a target list, so it also permits `make -f` and
+`make -C`, which run a Makefile outside the session directory.
 
 ## Allowlisted command execution
 

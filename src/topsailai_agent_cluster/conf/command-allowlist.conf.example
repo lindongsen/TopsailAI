@@ -11,9 +11,13 @@
 #
 # Programs that can execute other programs require at least two tokens, because
 # a single-token entry would authorise the whole program. The rejected set is
-# git, find, awk, sed, xargs, env, make, docker, kubectl, sh, bash, python,
-# python3, perl, ruby and node. Such an entry is refused when the file is
-# loaded, so a mistake fails at startup rather than at the first execution.
+# git, find, awk, sed, xargs, env, docker, kubectl, sh, bash, python, python3,
+# perl, ruby and node. Such an entry is refused when the file is loaded, so a
+# mistake fails at startup rather than at the first execution.
+#
+# `make` is deliberately not in that set, so the single bare `make` entry below
+# is accepted and permits every target. See the Make section for the accepted
+# risk of that breadth.
 #
 # Arguments are confined to the session working directory: an absolute path or a
 # `..` element is rejected before the program runs. `df -h` and `du -sh .` are
@@ -90,37 +94,14 @@ git push
 git pull
 git fetch
 
-# Make: the project's single entry point for tests, split by component and by
-# test kind. `make` can execute another program, so a bare `make` entry is
-# rejected at load time and every target is named instead. Prefix matching
-# compares tokens for equality, so one entry covers exactly one target and an
-# unlisted target stays refused.
+# Make: one bare entry, so every target is permitted, including a bare `make`
+# with no target at all. `make` is therefore not in the loader's
+# command-executing set, which is what allows a single-token entry here.
 #
-# This is not a sandbox. `make <target>` runs the Makefile in the session working
-# directory with the Endpoint's authority, so a modified Makefile is arbitrary
-# code execution. That is the same class as `git pull` running a `post-merge`
-# hook, which this policy already accepts. Naming a target narrows the entry to
-# one recipe family; it does not make the recipe safe.
-#
-# Build, packaging, image and service targets are deliberately absent, because
-# this group exists for the test entry points the project requires.
-make test-unit
-make test-unit-common
-make test-unit-server
-make test-unit-endpoint
-make test-unit-cli
-make test-provider-schema
-make test-conformance
-make test-provider-topsailai
-make test-provider-topsailai-conformance
-make test-bdd
-make test-integration
-make test-packaging
-make test-harness
-make test-live-smoke
-make test-live-smoke-modes
-make test
-make test-all
-make test-clean
-make bdd
-make integration
+# This is not a sandbox, and the entry is deliberately broad. `make` runs the
+# Makefile in the session working directory with the Endpoint's authority, so a
+# modified Makefile is arbitrary code execution. The entry also permits
+# `make -f <file>` and `make -C <dir>`, which run a Makefile outside the session
+# directory. That is the same class of risk this policy already accepts for
+# `git pull`, whose `post-merge` hook is arbitrary code.
+make

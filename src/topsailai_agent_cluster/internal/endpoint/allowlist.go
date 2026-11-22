@@ -17,9 +17,17 @@ const allowEmptyDirective = "allow-empty"
 // token entry for one of these would authorize the whole program, including its
 // ability to execute arbitrary commands, so such an entry is rejected at load
 // time. For example a bare "git" entry would permit "git -c core.fsmonitor=...".
+//
+// "make" is deliberately absent from this set. The operator requires one bare
+// "make" entry that permits every target, including a bare "make" with no target
+// at all, so the single-token rejection cannot apply to it. The accepted
+// consequence is that the entry also permits "make -f <file>" and "make -C <dir>",
+// which run an arbitrary Makefile; that is the same class of risk this policy
+// already accepts for "git pull", whose post-merge hook is arbitrary code. Every
+// other program here keeps the two-token rule.
 var commandExecutingPrograms = map[string]struct{}{
 	"awk": {}, "bash": {}, "docker": {}, "env": {}, "find": {}, "git": {},
-	"kubectl": {}, "make": {}, "node": {}, "perl": {}, "python": {}, "python3": {},
+	"kubectl": {}, "node": {}, "perl": {}, "python": {}, "python3": {},
 	"ruby": {}, "sed": {}, "sh": {}, "xargs": {},
 }
 

@@ -91,27 +91,17 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"git", "fetch", "--all"},
 		{"hostname"},
 		{"hostname", "-f"},
+		// One bare `make` entry permits every target, so these cases pin the
+		// breadth rather than a target list: a bare invocation, a named target,
+		// a variable assignment, and the two forms that reach another Makefile.
+		{"make"},
 		{"make", "test-unit"},
-		{"make", "test-unit-common"},
-		{"make", "test-unit-server"},
-		{"make", "test-unit-endpoint"},
-		{"make", "test-unit-cli"},
-		{"make", "test-provider-schema"},
-		{"make", "test-conformance"},
-		{"make", "test-provider-topsailai"},
-		{"make", "test-provider-topsailai-conformance"},
-		{"make", "test-bdd"},
-		{"make", "test-integration"},
-		{"make", "test-packaging"},
-		{"make", "test-harness"},
-		{"make", "test-live-smoke"},
-		{"make", "test-live-smoke-modes"},
-		{"make", "test"},
-		{"make", "test-all"},
-		{"make", "test-clean"},
-		{"make", "bdd"},
-		{"make", "integration"},
 		{"make", "test-unit-endpoint", "TEST_TMP_DIR=/tmp/x"},
+		{"make", "build"},
+		{"make", "deb"},
+		{"make", "server-restart"},
+		{"make", "-f", "/tmp/other.mk"},
+		{"make", "-C", "/tmp"},
 	}
 	for _, argv := range permitted {
 		if err := list.Permit(argv); err != nil {
@@ -133,11 +123,6 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"bash"},
 		{"python3", "-c", "print(1)"},
 		{"curl", "http://example.com"},
-		{"make"},
-		{"make", "build"},
-		{"make", "deb"},
-		{"make", "image"},
-		{"make", "server-restart"},
 	}
 	for _, argv := range denied {
 		if err := list.Permit(argv); err == nil {
@@ -177,6 +162,12 @@ func TestShippedAllowlistPermissiveFormsAreNotSandboxed(t *testing.T) {
 		{"ping", "-f", "127.0.0.1"},
 		{"mkdir", "-p", "nested/deep"},
 		{"touch", "created-by-operator"},
+		// The bare `make` entry permits every target and also `-f`/`-C`, which
+		// run a Makefile outside the session directory. `make` is therefore not
+		// in the loader's command-executing set, and this breadth is the
+		// accepted consequence recorded in the shipped policy.
+		{"make", "-f", "/tmp/other.mk", "arbitrary-target"},
+		{"make", "-C", "/tmp", "arbitrary-target"},
 	}
 	for _, argv := range risky {
 		if err := list.Permit(argv); err != nil {
