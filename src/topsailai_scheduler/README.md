@@ -119,6 +119,7 @@ such as `mock`.
 | `docs/Design.md` | Architecture, decisions, the control contract, the CLI. |
 | `docs/Seam.md` | The control contract, the launcher seam, and the provider seam. |
 | `docs/Provider_Contract.md` | The standard a provider implements, written for a provider author. |
+| `docs/Deployment.md` | The systemd unit, how to install and update it, and the single-instance guard. |
 
 ## What the scheduler is responsible for
 
@@ -200,6 +201,7 @@ talking to a daemon that already validated its own configuration.
 | `tests/bdd/` | Operator-visible behaviour, one feature per module |
 | `docs/` | Task format, environment variables, design, seams, BDD map |
 | `.task/` | Plan, review and check artifacts maintained by AI |
+| `deploy/` | The systemd unit, kept in the repository so the deployed configuration is reviewable |
 
 ## Testing
 

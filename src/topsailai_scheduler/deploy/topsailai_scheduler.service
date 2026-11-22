@@ -1,0 +1,61 @@
+[Unit]
+Description=TopsailAI task scheduler
+Documentation=file:///TopsailAI/src/topsailai_scheduler/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# The working directory pins every relative default the scheduler resolves
+# against the current directory, most importantly the control socket. Without
+# it the socket path would follow wherever systemd happened to start the
+# process, and a second instance started elsewhere would bind its own socket
+# instead of being refused.
+WorkingDirectory=/TopsailAI/src/topsailai_scheduler
+
+# The provider drives the topsailai CLI by name, so the CLI directory must be
+# on PATH. The systemd default PATH does not contain it.
+Environment=PATH=/TopsailAI/src/topsailai/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+
+# Tasks live outside the code tree on purpose, so the default relative "tasks"
+# would point at the wrong folder.
+Environment=SCHEDULER_TASKS_ROOT=/work/scheduler/tasks
+
+# The provider executable has no default; run exits without it.
+Environment=SCHEDULER_DEFAULT_PROVIDER_PATH=/TopsailAI/src/topsailai_scheduler/providers/scheduler-provider-topsailai/bin/scheduler-provider-topsailai
+
+# An absolute socket path keeps the single-instance guard effective regardless
+# of the working directory.
+Environment=SCHEDULER_CONTROL_SOCKET=/TopsailAI/src/topsailai_scheduler/.tmp/scheduler.sock
+
+# stdout lets journald own capture and rotation, so the scheduler does not run
+# a second rotation scheme of its own.
+Environment=SCHEDULER_LOG_OUTPUT=stdout
+
+# ExecStart points at the Makefile build output, so a rebuild is picked up by
+# restarting the service rather than by editing this unit.
+ExecStart=/TopsailAI/src/topsailai_scheduler/.tmp/topsailai_scheduler run
+
+Restart=always
+RestartSec=2
+
+# The scheduler handles SIGTERM by draining runs within ShutdownGrace (60s).
+# TimeoutStopSec must exceed that so systemd does not SIGKILL mid-drain.
+TimeoutStopSec=90
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+# ProtectSystem=strict makes the filesystem read-only, so the paths the daemon
+# writes must be listed: the control socket and build output, the task lock
+# files, and the run workspace.
+ReadWritePaths=/TopsailAI/src/topsailai_scheduler/.tmp /work/scheduler
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

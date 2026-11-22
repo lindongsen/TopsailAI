@@ -15,7 +15,7 @@ BIN := .tmp/topsailai_scheduler
 # COVERPROFILE is the coverage output, kept out of the source tree.
 COVERPROFILE := .tmp/coverage.out
 
-.PHONY: all build test cover vet fmt check clean run
+.PHONY: all build test cover vet fmt check clean run restart service
 
 all: check
 
@@ -50,6 +50,18 @@ check: fmt vet test
 # run starts the daemon from the project root.
 run: build
 	./$(BIN) run
+
+# restart rebuilds and restarts the systemd service.
+#
+# A rebuild alone does not change the running process: the old binary keeps its
+# inode until the process exits, so the service would keep executing the
+# previous build. Restarting is what makes the new binary take effect.
+restart: build
+	systemctl restart topsailai_scheduler
+
+# service reports the systemd unit state.
+service:
+	systemctl status topsailai_scheduler --no-pager
 
 # clean removes build and test artifacts.
 clean:
