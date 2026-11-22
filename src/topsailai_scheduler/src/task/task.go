@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -302,10 +303,55 @@ func (s Spec) Validate() error {
 	if strings.TrimSpace(s.Schedule) == "" {
 		return fmt.Errorf("schedule is required")
 	}
+	if err := ValidateSchedule(s.Schedule); err != nil {
+		return err
+	}
 	for key := range s.Env {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("env contains an empty variable name")
 		}
+	}
+	return nil
+}
+
+// scheduleParser matches the parser the daemon's cron instance uses, so a
+// schedule accepted here is one the daemon can register and vice versa.
+//
+// The daemon creates its cron with cron.WithSeconds(), which is this same
+// option set. Keeping the two in step is the reason this parser is defined once
+// here rather than rebuilt at each call site.
+var scheduleParser = cron.NewParser(
+	cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+)
+
+// NormalizeSchedule returns the expression in the six-field form the daemon's
+// cron instance expects.
+//
+// A five-field expression is the familiar cron form. Because the cron runs with
+// seconds enabled, a five-field expression is prefixed with a zero second field
+// rather than rejected. Every caller that registers a schedule must use this
+// function, so the expression that was validated is the same one that is
+// registered.
+func NormalizeSchedule(expression string) string {
+	trimmed := strings.TrimSpace(expression)
+	if len(strings.Fields(trimmed)) == 5 {
+		return "0 " + trimmed
+	}
+	return trimmed
+}
+
+// ValidateSchedule reports whether a cron expression can be registered.
+//
+// Validating the expression at load time is what keeps a task with an
+// unparseable schedule from being reported as healthy: without this check the
+// task loads, appears idle, and is silently never registered.
+func ValidateSchedule(expression string) error {
+	trimmed := strings.TrimSpace(expression)
+	if trimmed == "" {
+		return fmt.Errorf("schedule is required")
+	}
+	if _, err := scheduleParser.Parse(NormalizeSchedule(trimmed)); err != nil {
+		return fmt.Errorf("invalid schedule %q: %w", expression, err)
 	}
 	return nil
 }

@@ -321,7 +321,12 @@ func TestRescanKeepsUnchangedTask(t *testing.T) {
 }
 
 // TestRescanReportsInvalidSchedule verifies a task whose schedule cannot be
-// parsed is reported and skipped without aborting the scan.
+// parsed is rejected at load time and skipped without aborting the scan.
+//
+// The rejection happens while loading rather than while registering, because
+// task.ValidateSchedule runs inside Spec.Validate. That is deliberate: a task
+// that loads but never registers would appear idle and healthy, which is
+// indistinguishable from a task that is simply waiting for its next run.
 func TestRescanReportsInvalidSchedule(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "scheduler.log")
@@ -339,8 +344,28 @@ func TestRescanReportsInvalidSchedule(t *testing.T) {
 	if _, scheduled := scheduler.entries["good"]; !scheduled {
 		t.Fatal("expected the valid task to still be scheduled")
 	}
-	if !strings.Contains(readLog(t, logPath), "task not scheduled") {
-		t.Fatal("expected a not-scheduled log entry")
+
+	logged := readLog(t, logPath)
+	if !strings.Contains(logged, "task file rejected") {
+		t.Fatal("expected the invalid schedule to be reported as a rejected file")
+	}
+	if !strings.Contains(logged, "invalid schedule") {
+		t.Fatal("expected the rejection to name the invalid schedule")
+	}
+
+	snapshot, err := scheduler.Status()
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	broken, ok := snapshot.Find("bad")
+	if !ok {
+		t.Fatal("expected the invalid schedule to appear in the snapshot")
+	}
+	if broken.State != runtime.StateInvalid {
+		t.Fatalf("expected state %q, got %q", runtime.StateInvalid, broken.State)
+	}
+	if !strings.Contains(broken.Error, "invalid schedule") {
+		t.Fatalf("expected the reason to name the invalid schedule, got %q", broken.Error)
 	}
 }
 

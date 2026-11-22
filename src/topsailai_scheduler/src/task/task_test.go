@@ -448,3 +448,70 @@ func TestLoadShortContentDoesNotHideOtherTasks(t *testing.T) {
 		t.Errorf("failure should name the rejected file, got %q", failures[0].Path)
 	}
 }
+
+// TestValidateScheduleAcceptsSupportedForms verifies every cron form the daemon
+// can register is accepted, so a valid task is never rejected at load time.
+//
+// The five-field form is included because it is the familiar cron shape and the
+// daemon's cron runs with seconds enabled; rejecting it would break the most
+// common way to write a schedule.
+func TestValidateScheduleAcceptsSupportedForms(t *testing.T) {
+	cases := map[string]string{
+		"five fields":     "0 8 * * *",
+		"six fields":      "30 0 8 * * *",
+		"descriptor":      "@daily",
+		"every minute":    "* * * * *",
+		"padded with tab": "\t0 8 * * *\t",
+	}
+	for name, expression := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateSchedule(expression); err != nil {
+				t.Fatalf("expected %q to be accepted, got %v", expression, err)
+			}
+		})
+	}
+}
+
+// TestValidateScheduleRejectsUnparseable verifies an expression the cron parser
+// cannot read is rejected with a message naming the expression.
+//
+// Naming the expression matters because the message reaches the operator through
+// Status and the log; "invalid schedule" alone would not say which value to fix.
+func TestValidateScheduleRejectsUnparseable(t *testing.T) {
+	cases := map[string]string{
+		"words":        "not a cron",
+		"too few":      "0 8 *",
+		"too many":     "0 0 8 * * * *",
+		"bad range":    "0 99 * * *",
+		"empty":        "",
+		"only spaces":  "   ",
+		"unknown name": "@fortnightly",
+	}
+	for name, expression := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateSchedule(expression)
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", expression)
+			}
+			if !strings.Contains(err.Error(), "schedule") {
+				t.Fatalf("expected the message to mention the schedule, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestParseSpecRejectsInvalidSchedule verifies an unparseable schedule is
+// rejected while loading rather than accepted and silently never registered.
+//
+// This is the defect the check exists for: before it, a task with a nonsense
+// schedule loaded successfully, appeared idle with no error, and simply never
+// ran, which is indistinguishable from a healthy task waiting for its next run.
+func TestParseSpecRejectsInvalidSchedule(t *testing.T) {
+	_, err := ParseSpec([]byte("schedule: \"every morning\"\n"))
+	if err == nil {
+		t.Fatal("expected an unparseable schedule to be rejected")
+	}
+	if !strings.Contains(err.Error(), "every morning") {
+		t.Fatalf("expected the message to name the expression, got %q", err.Error())
+	}
+}

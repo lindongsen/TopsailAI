@@ -296,16 +296,18 @@ func (d *Daemon) rescan() error {
 }
 
 // schedule registers one task with the cron and returns its entry id.
+//
+// The expression is validated through task.ValidateSchedule first, so the daemon
+// and the offline checker cannot disagree about what is valid. The expression
+// that is registered comes from task.NormalizeSchedule, the same helper the
+// validation used, so a validated expression is never registered in a different
+// form.
 func (d *Daemon) schedule(item task.Task) (cron.EntryID, error) {
-	expression := strings.TrimSpace(item.Spec.Schedule)
-	// A five-field expression is the familiar cron form. The cron instance is
-	// created with seconds enabled, so a five-field expression is prefixed with
-	// a zero second field rather than rejected.
-	if len(strings.Fields(expression)) == 5 {
-		expression = "0 " + expression
+	if err := task.ValidateSchedule(item.Spec.Schedule); err != nil {
+		return 0, err
 	}
 
-	entryID, err := d.cron.AddFunc(expression, func() {
+	entryID, err := d.cron.AddFunc(task.NormalizeSchedule(item.Spec.Schedule), func() {
 		d.trigger(item)
 	})
 	if err != nil {
