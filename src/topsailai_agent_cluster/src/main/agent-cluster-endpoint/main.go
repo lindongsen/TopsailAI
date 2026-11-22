@@ -139,6 +139,13 @@ func main() {
 		// was restarted or killed. Without this line an operator cannot tell that
 		// the Endpoint gave up on a Server that was still running.
 		logger.Error("heartbeat acknowledgement timed out", "unacknowledged", unacknowledged.String(), "window", cfg.UnhealthyWindow.String())
+	}, OnConnected: func(address string, generation int64, initiator string) {
+		// Adoption is logged because it is otherwise silent: a successful dial
+		// writes nothing, so the Endpoint log cannot distinguish "never started"
+		// from "started and connected" from "started, connected and later killed".
+		// The generation is included because it is the value the Server fences on,
+		// so a reconnect that adopted a lower generation is visible here.
+		logger.Info("endpoint channel connected", "address", address, "generation", generation, "initiator", initiator)
 	}}
 	if listens {
 		// The Endpoint accepts the Server connection, so it must verify the
@@ -444,6 +451,12 @@ func main() {
 	if err := service.Run(ctx); err != nil {
 		logger.Error("endpoint service stopped", "error", err)
 	}
+	// Shutdown is logged after Run returns, because Run blocks until the context
+	// is cancelled. A process that exits without a line here is indistinguishable
+	// from one that was killed: the Endpoint log otherwise ends at whatever it
+	// last did, so an operator reading it after an outage cannot tell a
+	// deliberate restart from a crash.
+	logger.Info("endpoint shutting down", "endpoint_id", cfg.EndpointID, "instance_id", cfg.InstanceID)
 	if err := service.Close(); err != nil {
 		logger.Error("close endpoint service", "error", err)
 	}

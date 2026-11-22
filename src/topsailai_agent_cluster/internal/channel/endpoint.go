@@ -52,8 +52,16 @@ type EndpointClient struct {
 	// a reconnect and could not tell a Server that stopped answering from a
 	// Server that was restarted.
 	OnServerUnhealthy func(unacknowledged time.Duration)
-	Conn              *websocket.Conn
-	Generation        int64
+	// OnConnected is called after a connection becomes the active link, in both
+	// directions: a dial this Endpoint made and a connection the Server dialed.
+	// It exists because adoption is otherwise silent. A successful dial writes
+	// no log at all, so an operator reading the Endpoint log cannot tell "the
+	// process never started" from "the process started and connected" from "the
+	// process started, connected and was later killed". The reconnect path logs
+	// its own success, which makes the first connection the only silent one.
+	OnConnected func(address string, generation int64, initiator string)
+	Conn        *websocket.Conn
+	Generation  int64
 	// ServerIdentity names the Server database behind the active connection. It
 	// is recorded from the handshake so the Endpoint can tell a restarted Server
 	// from a different one.
@@ -222,6 +230,7 @@ func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiato
 		return false
 	}
 	previous := c.Conn
+	address := c.Address
 	c.Conn = conn
 	c.Generation = generation
 	c.Initiator = initiator
@@ -229,6 +238,13 @@ func (c *EndpointClient) Attach(conn *websocket.Conn, generation int64, initiato
 	c.mu.Unlock()
 	if previous != nil && previous != conn {
 		_ = previous.Close(websocket.StatusNormalClosure, "replaced")
+	}
+	// Reported after the lock is released, because a callback that logs must not
+	// run while the connection state is held. Both directions converge here, so
+	// one call site covers a dial this Endpoint made and a connection the Server
+	// dialed.
+	if c.OnConnected != nil {
+		c.OnConnected(address, generation, initiator)
 	}
 	return true
 }

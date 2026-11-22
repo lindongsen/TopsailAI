@@ -289,6 +289,23 @@ func (s *Server) installPeer(endpointID, instanceID, hostname, initiator string,
 	if previous != nil && previous.Conn != conn {
 		_ = previous.Conn.CloseNow()
 	}
+	// Adoption is logged because it is otherwise silent, and it is the only
+	// record that an Endpoint became reachable. The generation is included
+	// because it is what every later frame is fenced against, so a reconnect
+	// that installed a higher generation is visible here. A replaced peer is
+	// named separately, because a superseded link is not a disconnect and must
+	// not be read as one.
+	if s.Logger != nil {
+		if previous != nil && previous.Conn != conn {
+			s.Logger.Info("endpoint online; replaced previous connection",
+				"endpoint_id", endpointID, "instance_id", instanceID, "hostname", hostname,
+				"generation", generation, "previous_generation", previous.ConnectionGeneration, "initiator", initiator)
+		} else {
+			s.Logger.Info("endpoint online",
+				"endpoint_id", endpointID, "instance_id", instanceID, "hostname", hostname,
+				"generation", generation, "initiator", initiator)
+		}
+	}
 	return peer
 }
 
@@ -891,6 +908,19 @@ func (s *Server) remove(peer *Peer) {
 	s.Mu.Unlock()
 	if !authoritative {
 		return
+	}
+	// The disconnect is logged here rather than in finishDisconnect, because the
+	// heartbeat-expiry path already logs its own transition in the Server main
+	// package and would otherwise be reported twice. This site covers the other
+	// way a link ends: the read loop returned, which is a transport failure or a
+	// normal close. Without it the Server records an Endpoint going offline only
+	// when its heartbeat expired, so a killed Endpoint that closed cleanly left
+	// no trace at all.
+	if s.Logger != nil {
+		s.Logger.Info("endpoint offline",
+			"endpoint_id", peer.EndpointID, "instance_id", peer.InstanceID,
+			"generation", peer.ConnectionGeneration, "initiator", peer.Initiator,
+			"last_seen_at_ms", peer.LastSeen.UnixMilli())
 	}
 	s.finishDisconnect(peer, observedAtMS)
 }
