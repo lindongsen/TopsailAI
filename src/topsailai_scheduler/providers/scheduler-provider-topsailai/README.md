@@ -198,7 +198,7 @@ the desired state is reached.
 | Variable | Default | Meaning |
 |---|---|---|
 | `TOPSAILAI_PROVIDER_BINARY` | `topsailai` | Executable to drive. |
-| `TOPSAILAI_PROVIDER_STATE_DIR` | `~/.cache/topsailai-provider` | Where run records are kept. |
+| `TOPSAILAI_PROVIDER_STATE_DIR` | `{TOPSAILAI_HOME}/scheduler-provider` | Where run records are kept. |
 | `TOPSAILAI_PROVIDER_DRIVER` | `topsailai_agent_chat` | Agent driver to launch. |
 | `TOPSAILAI_HOME` | `~/.topsailai` | Where session artifacts are looked for. |
 
@@ -210,6 +210,13 @@ driver would make `poll` supervise an agent that never ends on its own.
 variable first, then `~/.topsailai`, then `/topsailai`. It must agree with the
 value the agent saw, or `poll` will look for session artifacts in the wrong
 folder and answer `unknown` forever.
+
+`TOPSAILAI_PROVIDER_STATE_DIR` defaults to a folder named after the project under
+`TOPSAILAI_HOME`, so run records sit beside the other runtime state the agent
+keeps there instead of in a separate cache tree. The project name is the prefix,
+which lets several providers share one home without colliding. The default is
+resolved on every call, not at import time, so a `TOPSAILAI_HOME` set after the
+provider starts is still honoured.
 
 The scheduler does not manage the state folder. Clearing it is safe: agents
 already launched keep running, and `poll` then reports `unknown`.

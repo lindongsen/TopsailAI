@@ -42,8 +42,11 @@ PROTOCOL_VERSION = 1
 # STATE_DIR_ENV names the environment variable holding the state folder.
 STATE_DIR_ENV = "TOPSAILAI_PROVIDER_STATE_DIR"
 
-# DEFAULT_STATE_DIR is used when the environment names no folder.
-DEFAULT_STATE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "topsailai-provider")
+# STATE_DIR_NAME is the folder created under TOPSAILAI_HOME for run records. The
+# project name is the prefix so several providers can share one home without
+# colliding, and so the records sit beside the other runtime state the agent
+# already keeps there instead of in a separate cache tree.
+STATE_DIR_NAME = "scheduler-provider"
 
 # RETENTION_ENV names the environment variable bounding how long a state record
 # is kept. Records are written on every start and were previously never removed,
@@ -134,8 +137,16 @@ def write_document(document):
 
 
 def state_dir():
-    """Return the state folder, creating it when missing."""
-    folder = os.environ.get(STATE_DIR_ENV) or DEFAULT_STATE_DIR
+    """Return the state folder, creating it when missing.
+
+    The default lives under TOPSAILAI_HOME so run records sit with the rest of
+    the runtime state. It is resolved on every call rather than at import time,
+    because TOPSAILAI_HOME may be set after this module is loaded and the CLI
+    resolves it the same way.
+    """
+    folder = os.environ.get(STATE_DIR_ENV) or os.path.join(
+        topsailai_home(), STATE_DIR_NAME
+    )
     os.makedirs(folder, exist_ok=True)
     return folder
 
