@@ -50,7 +50,13 @@ In another shell, in the same folder:
 ./.tmp/topsailai_scheduler status
 ./.tmp/topsailai_scheduler launch data/work --wait
 ./.tmp/topsailai_scheduler stop data/work
+./.tmp/topsailai_scheduler check
+./.tmp/topsailai_scheduler check data/work
 ```
+
+`check` validates the task tree without a daemon, so it can run in CI or before a
+restart. It reports every task with its reason and exits non-zero when any task is
+invalid. Given one task id or path it validates only that task.
 
 The CLI finds the daemon through `SCHEDULER_CONTROL_SOCKET`, which defaults to
 `scheduler.sock` in the working directory, so each project folder gets its own

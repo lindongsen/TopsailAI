@@ -67,6 +67,8 @@ fatal.
 | `.yaml` is empty | The file holds only whitespace. |
 | `.yaml` is unparseable | The YAML is malformed or contains an unknown key. |
 | `.yaml` lacks `schedule` | The `schedule` key is absent or empty. |
+| `schedule` is not a cron expression | The expression cannot be parsed, for example `every morning`. |
+| `env` has an empty name | An `env` entry has a blank key. |
 | `.md` is empty | The file holds only whitespace. |
 | `.md` is too short | Fewer characters remain after trimming whitespace than the configured floor. |
 
@@ -80,6 +82,29 @@ The rejection reason names the file and the actual count, for example
 `task content work.md has 4 characters, at least 30 are required`. The daemon
 logs it once per unchanged failure and logs a recovery when the file becomes
 valid again.
+
+The cron expression is validated while the task is loaded, not when it is
+registered. A task whose schedule cannot be parsed therefore never reaches the
+schedule at all, and `status` reports it as `invalid` with the reason instead of
+showing it as an idle task that silently never runs.
+
+## Checking a task tree
+
+`scheduler check` runs the same validation the daemon runs, without a daemon:
+
+```bash
+scheduler check                          # every task under the tasks folder
+scheduler check data/work                # one task, by id
+scheduler check tasks/data/work.yaml     # one task, by path
+scheduler check --json data/work         # machine-readable result
+```
+
+It exits `0` when every checked task is valid and `1` when any is invalid, so it
+can gate a deployment. A disabled task is reported as valid with a note that it
+is disabled: being switched off is a decision, not a defect.
+
+Because `check` calls the same loader as the daemon, the two cannot disagree
+about whether a task is acceptable. A separate validator would drift.
 
 ## Task identity
 
@@ -188,6 +213,26 @@ before the run starts.
 A duration such as `30m` or `2s`. A run exceeding it is stopped through its
 provider, which ends the run and its process group so a task that spawns children
 leaves no orphan.
+
+This is the only timeout a task can set. Two other timeouts exist around it and
+are scheduler-wide, because they describe how the scheduler watches every run
+rather than how long one task may work:
+
+| Timeout | Default | Set by | Scope |
+|---|---|---|---|
+| `timeout` | `SCHEDULER_DEFAULT_TIMEOUT` (`30m`) | this field | one task |
+| `SCHEDULER_POLL_INTERVAL` | `5s` | environment | every task |
+| `SCHEDULER_PROVIDER_CALL_TIMEOUT` | `180s` | environment | every provider call |
+
+The poll interval is how often a running task is asked whether it is still alive.
+It is not a deadline: a task that runs for an hour is polled many times and none
+of those polls ends it. The provider call timeout bounds a single conversation
+with the provider, not the run itself, so it must stay above the provider's own
+internal budget.
+
+A task cannot set the poll interval. Writing `poll_interval` in a task file is
+rejected as an unknown field rather than silently ignored, because a per-task
+poll rate would make the scheduler's own timing impossible to reason about.
 
 ### env
 
