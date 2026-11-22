@@ -304,6 +304,15 @@ node and prepare a workspace, grouped by purpose:
 | Network diagnostics | `ping`, `nc`, `ss`, `netstat` |
 | Filesystem mutation | `mkdir`, `touch` |
 | Git | `git status`, `git log`, `git diff`, `git show`, `git push`, `git pull`, `git fetch` |
+| Make test entry points | `make test-unit`, `make test-unit-common`, `make test-unit-server`, `make test-unit-endpoint`, `make test-unit-cli`, `make test-provider-schema`, `make test-conformance`, `make test-provider-topsailai`, `make test-provider-topsailai-conformance`, `make test-bdd`, `make test-integration`, `make test-packaging`, `make test-harness`, `make test-live-smoke`, `make test-live-smoke-modes`, `make test`, `make test-all`, `make test-clean`, `make bdd`, `make integration` |
+
+The `make` group exists because the project's recorded rule is that component-level and
+larger test runs go through a `make` target rather than an ad-hoc `go test` invocation, so
+the operator surface cannot follow that rule while `make` is unreachable. `make` can execute
+another program, so a bare `make` entry is rejected at load time and every target is named
+instead. Prefix matching compares tokens for equality, so one entry covers exactly one target
+and an unlisted target stays refused. Build, packaging, image and service targets are
+deliberately absent, because this group exists for the test entry points.
 
 Destructive entries are deliberately absent: `rm`, `mv`, `cp`, `dd`, `kill`,
 `truncate` and the package managers are not listed, so this surface cannot delete or
@@ -321,10 +330,12 @@ The default is not a sandbox. `git push` accepts `--receive-pack` and
 `git pull` also runs the repository's `post-merge` hook and any configured merge
 driver; `git show` honours `--output` and textconv filters declared in
 `.gitattributes`; `hostname NAME` renames the machine when the Endpoint runs as root;
-`nc` can listen, connect and transfer arbitrary data; `ping -f` floods a target; and
-`mkdir`/`touch` create entries in the session directory. Prefix matching cannot
-distinguish those forms, so an entry is only as narrow as its first tokens and every
-entry is reachable by anyone holding the `control` scope.
+`nc` can listen, connect and transfer arbitrary data; `ping -f` floods a target;
+`mkdir`/`touch` create entries in the session directory; and `make <target>` runs the
+Makefile in the session working directory with the Endpoint's authority, so a modified
+Makefile is arbitrary code execution. Prefix matching cannot distinguish those forms, so an
+entry is only as narrow as its first tokens and every entry is reachable by anyone holding
+the `control` scope.
 
 The file is reloaded on `SIGHUP`. A reload parses the whole file before replacing
 the active set, so a malformed edit keeps the previous entries in force and is

@@ -23,7 +23,9 @@
 #
 # The default below is the common operational set an operator needs to inspect a
 # node and prepare a workspace, plus the git entries needed to publish work,
-# synchronise a checkout and inspect arbitrary revisions. It is not a sandbox.
+# synchronise a checkout and inspect arbitrary revisions, plus the `make` test
+# targets the project requires as its single test entry point. It is not a
+# sandbox.
 # `git push` accepts `--receive-pack` and `git fetch`/`git pull` accept
 # `--upload-pack`, both of which run a local command; `git pull` also runs the
 # repository's `post-merge` hook and any configured merge driver; `git show`
@@ -87,3 +89,38 @@ git show
 git push
 git pull
 git fetch
+
+# Make: the project's single entry point for tests, split by component and by
+# test kind. `make` can execute another program, so a bare `make` entry is
+# rejected at load time and every target is named instead. Prefix matching
+# compares tokens for equality, so one entry covers exactly one target and an
+# unlisted target stays refused.
+#
+# This is not a sandbox. `make <target>` runs the Makefile in the session working
+# directory with the Endpoint's authority, so a modified Makefile is arbitrary
+# code execution. That is the same class as `git pull` running a `post-merge`
+# hook, which this policy already accepts. Naming a target narrows the entry to
+# one recipe family; it does not make the recipe safe.
+#
+# Build, packaging, image and service targets are deliberately absent, because
+# this group exists for the test entry points the project requires.
+make test-unit
+make test-unit-common
+make test-unit-server
+make test-unit-endpoint
+make test-unit-cli
+make test-provider-schema
+make test-conformance
+make test-provider-topsailai
+make test-provider-topsailai-conformance
+make test-bdd
+make test-integration
+make test-packaging
+make test-harness
+make test-live-smoke
+make test-live-smoke-modes
+make test
+make test-all
+make test-clean
+make bdd
+make integration

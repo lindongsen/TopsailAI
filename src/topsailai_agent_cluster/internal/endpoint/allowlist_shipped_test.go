@@ -91,6 +91,27 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"git", "fetch", "--all"},
 		{"hostname"},
 		{"hostname", "-f"},
+		{"make", "test-unit"},
+		{"make", "test-unit-common"},
+		{"make", "test-unit-server"},
+		{"make", "test-unit-endpoint"},
+		{"make", "test-unit-cli"},
+		{"make", "test-provider-schema"},
+		{"make", "test-conformance"},
+		{"make", "test-provider-topsailai"},
+		{"make", "test-provider-topsailai-conformance"},
+		{"make", "test-bdd"},
+		{"make", "test-integration"},
+		{"make", "test-packaging"},
+		{"make", "test-harness"},
+		{"make", "test-live-smoke"},
+		{"make", "test-live-smoke-modes"},
+		{"make", "test"},
+		{"make", "test-all"},
+		{"make", "test-clean"},
+		{"make", "bdd"},
+		{"make", "integration"},
+		{"make", "test-unit-endpoint", "TEST_TMP_DIR=/tmp/x"},
 	}
 	for _, argv := range permitted {
 		if err := list.Permit(argv); err != nil {
@@ -112,6 +133,11 @@ func TestShippedAllowlistPinsTheDefaultPolicy(t *testing.T) {
 		{"bash"},
 		{"python3", "-c", "print(1)"},
 		{"curl", "http://example.com"},
+		{"make"},
+		{"make", "build"},
+		{"make", "deb"},
+		{"make", "image"},
+		{"make", "server-restart"},
 	}
 	for _, argv := range denied {
 		if err := list.Permit(argv); err == nil {
