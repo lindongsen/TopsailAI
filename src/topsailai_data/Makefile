@@ -19,6 +19,17 @@ ifeq ($(GOPATH),)
 endif
 INSTALL_DIR := $(GOPATH)/bin
 
+# Build metadata injected into pkg/version through the linker, so the binary
+# reports the source it was built from instead of a hand-maintained constant.
+# Override any value from the command line, for example VERSION=v1.2.3.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_PKG := github.com/topsailai/topsailai_data/pkg/version
+LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) \
+           -X $(VERSION_PKG).Commit=$(COMMIT) \
+           -X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
+
 # Default target
 .DEFAULT_GOAL := build
 
@@ -26,7 +37,7 @@ INSTALL_DIR := $(GOPATH)/bin
 .PHONY: build
 build:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -o $(BIN) $(CMD_PATH)
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) $(CMD_PATH)
 
 # Run all tests
 .PHONY: test

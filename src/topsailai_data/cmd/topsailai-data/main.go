@@ -41,7 +41,18 @@ func realDependencies() dependencies {
 // run loads configuration, initializes the manager, and dispatches the CLI.
 // It returns an exit code (0 for success, 1 for any error) so that both main()
 // and unit tests can observe outcomes directly.
+//
+// A version request is answered before configuration loading, so querying the
+// build version never fails because of a broken store configuration.
 func run(args []string, deps dependencies) int {
+	if cli.VersionRequest(args) {
+		if err := cli.PrintVersion(os.Stdout, args); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	cfg, err := deps.loadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load configuration: %v\n", err)
