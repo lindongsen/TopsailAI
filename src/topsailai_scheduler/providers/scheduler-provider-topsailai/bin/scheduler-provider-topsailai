@@ -45,6 +45,17 @@ STATE_DIR_ENV = "TOPSAILAI_PROVIDER_STATE_DIR"
 # DEFAULT_STATE_DIR is used when the environment names no folder.
 DEFAULT_STATE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "topsailai-provider")
 
+# RETENTION_ENV names the environment variable bounding how long a state record
+# is kept. Records are written on every start and were previously never removed,
+# so the folder grew without limit: a task running hourly accumulates thousands
+# of files a year.
+RETENTION_ENV = "TOPSAILAI_PROVIDER_STATE_RETENTION_DAYS"
+
+# DEFAULT_RETENTION_DAYS is how long a record is kept when the environment names
+# no value. It is deliberately generous: a record is only needed while a run may
+# still be supervised, and a week covers a run that outlives its schedule.
+DEFAULT_RETENTION_DAYS = 7
+
 # BINARY_ENV names the environment variable overriding the topsailai executable.
 BINARY_ENV = "TOPSAILAI_PROVIDER_BINARY"
 
@@ -160,6 +171,66 @@ def save_record(folder, run_id, record):
     os.replace(temporary, path)
 
 
+def retention_days():
+    """Return how many days a state record is kept.
+
+    An unreadable or negative value falls back to the default rather than
+    disabling cleanup: a typo must not silently restore unbounded growth.
+    """
+    raw = (os.environ.get(RETENTION_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_RETENTION_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+    return days if days >= 0 else DEFAULT_RETENTION_DAYS
+
+
+def prune_records(folder, keep_run_id):
+    """Delete state records older than the retention window.
+
+    The record just written is never removed, even when its own timestamp looks
+    old, because a clock that moved backwards must not delete the run that is
+    about to be supervised. Removal is logged with the count so an operator can
+    see that cleanup happened instead of inferring it from a shrinking folder.
+    """
+    days = retention_days()
+    cutoff = time.time() - days * 86400
+    removed = 0
+    kept = 0
+    for path in glob.glob(os.path.join(folder, "*.json")):
+        if os.path.basename(path) == "%s.json" % keep_run_id:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                record = json.load(handle)
+            started_at = float(record.get("started_at") or 0)
+        except (OSError, ValueError, TypeError):
+            # A record that cannot be read cannot be aged, so it is left alone.
+            # Deleting it would discard the only evidence of what went wrong.
+            kept += 1
+            continue
+        if started_at and started_at < cutoff:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError as error:
+                print(
+                    "topsailai-provider: cannot remove stale record %s: %s" % (path, error),
+                    file=sys.stderr,
+                )
+                kept += 1
+            continue
+        kept += 1
+    if removed:
+        print(
+            "topsailai-provider: removed %d state record(s) older than %d day(s) from %s, kept %d"
+            % (removed, days, folder, kept),
+            file=sys.stderr,
+        )
+
+
 def run_command(arguments, environment, timeout):
     """Run one topsailai command and return its completed process."""
     try:
@@ -270,6 +341,11 @@ def operation_start(document):
         "task_id": document.get("task_id") or "",
         "driver": driver(),
     })
+    # Cleanup runs after the new record is written and before the handle is
+    # returned, so the folder is bounded by the time the run is supervised. The
+    # new record is passed as the one to keep, because a clock that moved
+    # backwards must not delete the run that is about to be polled.
+    prune_records(folder, run_id)
 
     write_document({
         "protocol_version": PROTOCOL_VERSION,

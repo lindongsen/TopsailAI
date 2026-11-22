@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 # PROVIDER is the executable under test.
@@ -448,6 +449,124 @@ class TopsailAIProviderTest(unittest.TestCase):
             timeout=60,
         )
         self.assertNotEqual(completed.returncode, 0)
+
+    def write_record(self, run_id, started_at):
+        """Write one state record with a chosen start time."""
+        path = os.path.join(self.state, "%s.json" % run_id)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "run_id": run_id,
+                "session_id": "session-%s" % run_id,
+                "launcher_pid": 1,
+                "launcher_exit": 0,
+                "started_at": started_at,
+                "task_id": "data/work",
+                "driver": "topsailai_agent_chat",
+            }, handle)
+        return path
+
+    def test_start_removes_records_older_than_the_retention(self):
+        """A record past the retention window must be deleted on the next start.
+
+        Records are written on every start and were never removed, so the folder
+        grew without limit. A task running hourly accumulates thousands of files
+        a year, which is unbounded growth in a folder nothing else cleans.
+        """
+        stale = self.write_record("stale", time.time() - 8 * 86400)
+        fresh = self.write_record("fresh", time.time() - 1 * 86400)
+
+        self.start()
+
+        self.assertFalse(os.path.exists(stale), "expected the stale record to be removed")
+        self.assertTrue(os.path.exists(fresh), "expected the recent record to be kept")
+
+    def test_start_keeps_records_inside_the_retention(self):
+        """A record inside the window must survive, because it may still be polled."""
+        recent = self.write_record("recent", time.time() - 6 * 86400)
+
+        self.start()
+
+    def test_start_prunes_a_backdated_previous_record(self):
+        """A previous record with an old timestamp must be pruned on the next start.
+
+        This is the clock-skew case: a record written by an earlier run can carry
+        a timestamp far in the past. It must be removed, while the record written
+        by the current start must survive so the run can still be polled.
+        """
+        receipt = self.start()
+        previous = os.path.join(self.state, "%s.json" % receipt["run_id"])
+        self.assertTrue(os.path.exists(previous), "expected the first record to exist")
+
+        with open(previous, "r", encoding="utf-8") as handle:
+            record = json.load(handle)
+        record["started_at"] = time.time() - 30 * 86400
+        with open(previous, "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+
+        second = self.start()
+        current = os.path.join(self.state, "%s.json" % second["run_id"])
+
+        self.assertFalse(os.path.exists(previous), "expected the backdated record to be pruned")
+        self.assertTrue(os.path.exists(current), "expected the current record to survive")
+
+    def test_start_honours_the_retention_override(self):
+        """An operator must be able to change the window without editing code."""
+        record = self.write_record("two-days", time.time() - 2 * 86400)
+        self.environment["TOPSAILAI_PROVIDER_STATE_RETENTION_DAYS"] = "1"
+
+        self.start()
+
+        self.assertFalse(os.path.exists(record), "expected the record to be removed")
+
+    def test_start_keeps_records_when_the_retention_is_unreadable(self):
+        """A typo must not disable cleanup, and must not delete everything either.
+
+        An unreadable value falls back to the default window rather than being
+        treated as zero, because zero would delete every record including ones
+        that are still being supervised.
+        """
+        recent = self.write_record("recent", time.time() - 1 * 86400)
+        self.environment["TOPSAILAI_PROVIDER_STATE_RETENTION_DAYS"] = "seven"
+
+        self.start()
+
+        self.assertTrue(os.path.exists(recent), "expected the default window to keep the record")
+
+    def test_start_keeps_unreadable_records(self):
+        """A corrupt record must be left alone, because it is the only evidence."""
+        path = os.path.join(self.state, "corrupt.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+
+        self.start()
+
+        self.assertTrue(os.path.exists(path), "expected the corrupt record to be kept")
+
+    def test_start_logs_the_removal(self):
+        """Removal must be logged, so an operator can see cleanup happened."""
+        self.write_record("stale", time.time() - 8 * 86400)
+
+        completed = subprocess.run(
+            [PROVIDER, "start"],
+            input=json.dumps({
+                "protocol_version": 1,
+                "task_id": "data/work",
+                "task_path": "/tasks/data/work.md",
+                "task_dir": "/tasks/data",
+                "workspace": "/srv/project",
+                "command": "",
+                "args": [],
+                "env": {},
+                "timeout_ms": 0,
+            }),
+            capture_output=True,
+            text=True,
+            env=dict(self.environment, STUB_REPLY=json.dumps({"ok": True, "session_id": "s", "pid": 1})),
+            timeout=60,
+        )
+        self.assertEqual(completed.returncode, 0, "provider failed: %s" % completed.stderr)
+        self.assertIn("removed 1 state record", completed.stderr)
+        self.assertIn("7 day", completed.stderr)
 
 
 if __name__ == "__main__":
