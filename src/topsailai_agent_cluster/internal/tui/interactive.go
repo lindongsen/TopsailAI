@@ -619,10 +619,6 @@ func executeInteractiveLine(ctx context.Context, api InteractiveAPI, state *inte
 		// trusted writer. The untrusted writer would strip the styling it emits,
 		// which is exactly the failure that made the prompt lose its colour.
 		return false, interactiveMessages(ctx, api, state, rest, trustedOut, errOut, options.Color)
-	case "table":
-		return false, fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
-	case "use":
-		return false, fmt.Errorf(`"use" has been removed; use "cd" to navigate`)
 	case "cd":
 		return false, interactiveCD(ctx, api, state, rest, lineResults, out, trustedOut, options.Color, options)
 	case "show":

@@ -346,10 +346,15 @@ func TestInteractiveHelpSharesListDescriptionWithCLI(t *testing.T) {
 	}
 }
 
-func TestInteractiveTableCommandReportsRemoval(t *testing.T) {
+// TestInteractiveTableCommandIsUnknown proves the removed table spelling is an
+// ordinary unknown command rather than a dedicated migration message.
+func TestInteractiveTableCommandIsUnknown(t *testing.T) {
 	_, errorsOut := runInputScenario(t, &interactiveStub{}, "table\nexit\n", 8192)
-	if !strings.Contains(errorsOut, `"table" has been removed; use "list --clean"`) {
-		t.Fatalf("removal error=%q", errorsOut)
+	if !strings.Contains(errorsOut, `unknown command "table"`) {
+		t.Fatalf("unknown-command error=%q", errorsOut)
+	}
+	if strings.Contains(errorsOut, "has been removed") {
+		t.Fatalf("the removed tombstone is still reported: %q", errorsOut)
 	}
 }
 
@@ -402,16 +407,25 @@ func TestInteractiveListRowsBindSessionThroughCD(t *testing.T) {
 	}
 }
 
-func TestInteractiveUseCommandIsRemovedAndBindsNothing(t *testing.T) {
+// TestInteractiveUseCommandIsUnknownAndBindsNothing proves the removed use
+// spelling is an ordinary unknown command and still binds no session.
+//
+// The binding half is the load-bearing assertion: an unknown command must not
+// change scope, because a typo that silently navigated would leave the operator
+// addressing a different machine than the prompt shows.
+func TestInteractiveUseCommandIsUnknownAndBindsNothing(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
 	if err := RunInteractive(context.Background(), stub, strings.NewReader("list\nuse 1\nuse endpoint-1 session-1\nexit\n"), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	assertActionableErrors(t, errorsOut.String(),
-		`error: "use" has been removed; use "cd" to navigate`,
-		`error: "use" has been removed; use "cd" to navigate`,
+		`error: unknown command "use" (try help)`,
+		`error: unknown command "use" (try help)`,
 	)
+	if strings.Contains(errorsOut.String(), "has been removed") {
+		t.Fatalf("the removed tombstone is still reported: %q", errorsOut.String())
+	}
 	if strings.Contains(output.String(), "session[endpoint-1/-]>") {
 		t.Fatalf("removed use command bound a session: %q", output.String())
 	}

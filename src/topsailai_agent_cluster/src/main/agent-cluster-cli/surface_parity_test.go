@@ -17,9 +17,9 @@ import (
 // record here why it cannot have one. A silent omission is the defect this test
 // exists to prevent.
 var interactiveOnlyCommands = map[string]string{
-	"cd":   "navigates REPL scope, which exists only inside the interactive loop; a standalone invocation has no scope to change",
-	"quit": "ends the REPL loop; a standalone invocation already ends when its command finishes",
-	"exit": "ends the REPL loop; a standalone invocation already ends when its command finishes",
+	"cd":    "navigates REPL scope, which exists only inside the interactive loop; a standalone invocation has no scope to change",
+	"quit":  "ends the REPL loop; a standalone invocation already ends when its command finishes",
+	"exit":  "ends the REPL loop; a standalone invocation already ends when its command finishes",
 	"watch": "its ticks are list or refresh, both of which have standalone spellings, and --trigger is a foreground convenience in the operator's own client process rather than a reliability promise",
 }
 

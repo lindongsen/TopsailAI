@@ -339,14 +339,26 @@ func TestHelpRequestStopsAtTerminator(t *testing.T) {
 	}
 }
 
-func TestRemovedTableCommandReturnsMigrationError(t *testing.T) {
+// TestRemovedTableCommandIsUnknown proves the removed table spelling is an
+// ordinary unknown command on the standalone surface.
+//
+// It used to carry a dedicated migration message, which meant a dispatch branch
+// existed only to print it. The command no longer exists, so the generic
+// unknown-command diagnostic is the honest answer.
+func TestRemovedTableCommandIsUnknown(t *testing.T) {
 	var output, diagnostics strings.Builder
 	code, err := runWithSignals([]string{"table"}, strings.NewReader(""), &output, &diagnostics, func() bool { return false }, nil)
 	if code != 2 || err == nil {
 		t.Fatalf("code=%d err=%v diagnostics=%q", code, err, diagnostics.String())
 	}
-	if !strings.Contains(diagnostics.String(), `"table" has been removed; use "list --clean"`) || strings.Contains(output.String(), "ENDPOINT") {
-		t.Fatalf("unexpected removal output=%q diagnostics=%q", output.String(), diagnostics.String())
+	if !strings.Contains(diagnostics.String(), `unknown command "table"`) {
+		t.Fatalf("unknown-command diagnostic=%q", diagnostics.String())
+	}
+	if strings.Contains(diagnostics.String(), "has been removed") {
+		t.Fatalf("the removed tombstone is still reported: %q", diagnostics.String())
+	}
+	if strings.Contains(output.String(), "ENDPOINT") {
+		t.Fatalf("a removed command rendered a table: %q", output.String())
 	}
 }
 
@@ -1421,7 +1433,7 @@ func TestActionResumePositionalGenerationIsHonoured(t *testing.T) {
 //
 // Resolving a disagreement by precedence would resume a session the operator did not
 // name, and the command would look successful. An empty spelling is absent rather than
-// a value, so "-s ''" cannot silently degrade into the resource form.
+// a value, so an empty -s value cannot silently degrade into the resource form.
 func TestReconcileSessionHandleRejectsDisagreement(t *testing.T) {
 	cases := []struct {
 		name       string

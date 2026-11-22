@@ -521,14 +521,21 @@ func TestUnknownCommandDiagnosticIsPreserved(t *testing.T) {
 	assertActionableError(t, diagnostics, strings.TrimSuffix(want, "\n"))
 }
 
-func TestRemovedCommandsKeepTheirDiagnostics(t *testing.T) {
+// TestRemovedCommandsAreUnknown proves the two removed spellings are now
+// ordinary unknown commands.
+//
+// They used to carry a dedicated migration message, which meant a dispatch
+// branch existed only to print it. That branch was dead code: the commands no
+// longer exist, so the generic unknown-command diagnostic is the honest answer
+// and it already points the operator at help.
+func TestRemovedCommandsAreUnknown(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{name: "table", input: "table\nexit\n", want: "error: \"table\" has been removed; use \"list --clean\" for the previous behavior\n"},
-		{name: "use", input: "use 1\nexit\n", want: "error: \"use\" has been removed; use \"cd\" to navigate\n"},
+		{name: "table", input: "table\nexit\n", want: "error: unknown command \"table\" (try help)\n"},
+		{name: "use", input: "use 1\nexit\n", want: "error: unknown command \"use\" (try help)\n"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -418,8 +418,6 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			return model(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), *jsonMode, tui.OutputColorPolicy(output))
 		}
 		return modelSelectWithProgress(ctx, api, output, errors, flags.Arg(1), flags.Arg(2), flags.Arg(3), *confirmed, *jsonMode, *waitTimeoutMS, *generation)
-	case "table":
-		return fmt.Errorf(`"table" has been removed; use "list --clean" for the previous behavior`)
 	case "show":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: show <endpoint-id-or-session-id>")
@@ -664,7 +662,7 @@ func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
 //
 // Two different values are rejected rather than resolved by precedence, because
 // either choice would resume a session the operator did not name. An empty value
-// is treated as absent, so "-s ''" cannot silently degrade into the resource-ID
+// is treated as absent, so an empty -s value cannot silently degrade into the resource-ID
 // form and resume a different target than the one the operator typed.
 func reconcileSessionHandle(short, long string) (string, error) {
 	short, long = strings.TrimSpace(short), strings.TrimSpace(long)

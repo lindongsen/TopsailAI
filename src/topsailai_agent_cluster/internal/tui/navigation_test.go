@@ -360,9 +360,11 @@ func TestCDFailureKeepsSessionScope(t *testing.T) {
 	}
 }
 
-func TestUseCommandReportsRemoval(t *testing.T) {
+// TestUseCommandIsUnknown proves the removed use spelling is an ordinary
+// unknown command and leaves the scope unchanged.
+func TestUseCommandIsUnknown(t *testing.T) {
 	output, diagnostics := runNav(t, singleHostStub(), "use 1\nexit\n")
-	assertActionableError(t, diagnostics, `error: "use" has been removed; use "cd" to navigate`)
+	assertActionableError(t, diagnostics, `error: unknown command "use" (try help)`)
 	if got := lastPrompt(output); got != "workspace>" {
 		t.Fatalf("final prompt = %q, want unchanged workspace prompt", got)
 	}

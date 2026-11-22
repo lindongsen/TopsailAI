@@ -558,11 +558,11 @@ func TestPrepareActionNamesHandleTargetInConfirmation(t *testing.T) {
 	api := &runnerStubAPI{}
 	runner := CommandRunner{API: api, NewID: func() string { return "cmd-handle" }}
 	_, err := runner.PrepareAction(context.Background(), ActionRequest{
-		Operation:            protocol.OperationAgentResume,
-		EndpointID:           "ep-1",
+		Operation:             protocol.OperationAgentResume,
+		EndpointID:            "ep-1",
 		ProviderSessionHandle: "sad-1",
-		Payload:              json.RawMessage(`{}`),
-		Confirmed:            false,
+		Payload:               json.RawMessage(`{}`),
+		Confirmed:             false,
 	})
 	if err == nil {
 		t.Fatal("expected a confirmation error")
