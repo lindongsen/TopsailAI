@@ -121,12 +121,24 @@ func Requested(args []string, valueOptions map[string]bool) bool {
 // SplitOptionName reports the option name without its leading dashes and whether
 // the value was attached with "=".
 //
+// An argument that is not spelled as an option reports no name at all, so a bare
+// positional word can never be read as an option. The guard lives here rather than
+// at each caller because a caller that forgets it reads a positional value as an
+// option, and the mistake is invisible: the scan still returns a plausible answer.
+// The observed case was a version request that stated no --json option answering in
+// JSON because the positional word "json" was read as that option.
+//
 // It is exported because the CLI already had this exact helper for its own raw
 // argument scans, and a second copy would drift: the two would disagree the first
 // time an option spelling changed, and the disagreement would be invisible because
 // both copies would still compile. The CLI's own helper now delegates here, so one
 // implementation serves every raw scan in the program.
 func SplitOptionName(arg string) (string, bool) {
+	// A lone "-" is a conventional stdin placeholder, not an option, and an
+	// argument with no leading dash is data. Both report no name.
+	if !strings.HasPrefix(arg, "-") || arg == "-" {
+		return "", false
+	}
 	name := strings.TrimLeft(arg, "-")
 	if idx := strings.Index(name, "="); idx >= 0 {
 		return name[:idx], true

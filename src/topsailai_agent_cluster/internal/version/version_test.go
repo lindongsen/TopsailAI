@@ -135,3 +135,64 @@ func snapshot() [3]string {
 func restore(values [3]string) {
 	Version, Commit, BuildTime = values[0], values[1], values[2]
 }
+
+// TestSplitOptionNameRejectsABareWord proves a positional value is never an option.
+//
+// The scan is used to read raw arguments before flag parsing, so it sees every
+// token including the positional ones. A bare word that happens to spell an option
+// name must report no name at all, because the alternative is that a positional
+// value silently changes how the program answers. The observed defect was a version
+// request that stated no --json option answering in JSON because the positional
+// word "json" was read as that option.
+func TestSplitOptionNameRejectsABareWord(t *testing.T) {
+	for _, arg := range []string{"json", "session", "endpoint", "generation", "task", "profile", "folder", "lines", "limit", "-"} {
+		name, hasValue := SplitOptionName(arg)
+		if name != "" || hasValue {
+			t.Fatalf("SplitOptionName(%q) = (%q, %v), want no option: a bare word is data", arg, name, hasValue)
+		}
+	}
+}
+
+// TestSplitOptionNameReadsEveryOptionSpelling proves the guard did not narrow the
+// spellings the scan must still recognise.
+//
+// The bare-word guard is a rejection, so it is only correct if every real option
+// spelling still reports its name. A guard that rejected too much would make the
+// version and help scans stop seeing options at all, and both would then answer
+// requests the operator never made.
+func TestSplitOptionNameReadsEveryOptionSpelling(t *testing.T) {
+	cases := []struct {
+		arg      string
+		wantName string
+		wantHas  bool
+	}{
+		{"--json", "json", false},
+		{"-v", "v", false},
+		{"--max-chars=40", "max-chars", true},
+		{"-c=40", "c", true},
+		{"--endpoint", "endpoint", false},
+	}
+	for _, testCase := range cases {
+		name, hasValue := SplitOptionName(testCase.arg)
+		if name != testCase.wantName || hasValue != testCase.wantHas {
+			t.Fatalf("SplitOptionName(%q) = (%q, %v), want (%q, %v)", testCase.arg, name, hasValue, testCase.wantName, testCase.wantHas)
+		}
+	}
+}
+
+// TestRequestedIgnoresAPositionalWordThatSpellsAnOption proves the version scan
+// cannot be steered by a positional value.
+//
+// This is the end-to-end form of the bare-word guard: the scan walks every token,
+// so a command whose last positional happens to be "json" must not change the
+// answer. The assertion names the answer rather than the helper, because the helper
+// could be correct while a caller still read the word.
+func TestRequestedIgnoresAPositionalWordThatSpellsAnOption(t *testing.T) {
+	args := []string{"-v", "project", "add", "ep", "/tmp/x", "json"}
+	if !Requested(args, nil) {
+		t.Fatal("Requested missed the -v in a command whose positional spells an option")
+	}
+	if name, _ := SplitOptionName("json"); name != "" {
+		t.Fatalf("the positional word was read as option %q", name)
+	}
+}

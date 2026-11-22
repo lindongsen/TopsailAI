@@ -1662,3 +1662,77 @@ func TestStandaloneContextInjectOmitsAbsentProviderDocument(t *testing.T) {
 		t.Fatalf("absent document must print no section, got %q", out.String())
 	}
 }
+
+// TestRawJSONRequestedIgnoresAPositionalWord proves a positional value cannot
+// select the output format.
+//
+// The scan walks every raw token, so it sees the positional arguments too. A
+// command whose last positional happens to spell "json" must not turn a version
+// request into a JSON document, because the operator asked for the version and
+// stated no format. The observed defect was exactly that: the built binary answered
+// `-v project add ep /tmp/x json` with a JSON document.
+func TestRawJSONRequestedIgnoresAPositionalWord(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{
+			name: "bare positional word json states no format",
+			args: []string{"-v", "project", "add", "ep", "/tmp/x", "json"},
+			want: false,
+		},
+		{
+			name: "bare positional word json before the command states no format",
+			args: []string{"json", "-v"},
+			want: false,
+		},
+		{
+			name: "the real option still selects json",
+			args: []string{"-v", "--json"},
+			want: true,
+		},
+		{
+			name: "the real option before the version flag still selects json",
+			args: []string{"--json", "-v"},
+			want: true,
+		},
+		{
+			name: "an explicit false states the opposite",
+			args: []string{"-v", "--json=false"},
+			want: false,
+		},
+		{
+			name: "a terminator ends the scan",
+			args: []string{"-v", "--", "--json"},
+			want: false,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := rawJSONRequested(testCase.args); got != testCase.want {
+				t.Fatalf("rawJSONRequested(%q) = %v, want %v", testCase.args, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestVersionRequestWithAPositionalWordAnswersInPlainText proves the whole path,
+// not only the scan.
+//
+// The scan and the renderer are two links, and a chain of correct links can still
+// have no consumer. This drives the real entry point so the answer the operator
+// receives is the thing asserted.
+func TestVersionRequestWithAPositionalWordAnswersInPlainText(t *testing.T) {
+	var output, diagnostics strings.Builder
+	if err := runWithIO([]string{"-v", "project", "add", "ep", "/tmp/x", "json"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
+		t.Fatalf("a version request must succeed: %v", err)
+	}
+	text := output.String()
+	if strings.HasPrefix(strings.TrimSpace(text), "{") {
+		t.Fatalf("a positional word selected the JSON format: %q", text)
+	}
+	if !strings.Contains(text, "agent-cluster-cli") {
+		t.Fatalf("the plain-text identity is missing: %q", text)
+	}
+}
