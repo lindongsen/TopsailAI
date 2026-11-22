@@ -306,3 +306,79 @@ func TestBinaryMissingRootHandled(t *testing.T) {
 		t.Fatalf("expected error prefix in output: %s", out)
 	}
 }
+
+func TestRunVersionSkipsConfigurationLoading(t *testing.T) {
+	// A version query must succeed even when configuration loading would fail.
+	deps := dependencies{
+		loadConfig: func() (*config.Config, error) { return nil, errors.New("config error") },
+	}
+
+	out := captureStdout(t, func() {
+		if got := run([]string{"version"}, deps); got != 0 {
+			t.Fatalf("expected exit code 0, got %d", got)
+		}
+	})
+
+	if !strings.Contains(out, "topsailai-data") {
+		t.Fatalf("version output missing program name: %q", out)
+	}
+}
+
+func TestRunVersionFlagSkipsConfigurationLoading(t *testing.T) {
+	deps := dependencies{
+		loadConfig: func() (*config.Config, error) { return nil, errors.New("config error") },
+	}
+
+	out := captureStdout(t, func() {
+		if got := run([]string{"--version"}, deps); got != 0 {
+			t.Fatalf("expected exit code 0, got %d", got)
+		}
+	})
+
+	if !strings.Contains(out, "topsailai-data") {
+		t.Fatalf("version output missing program name: %q", out)
+	}
+}
+
+func TestRunVersionReportsInvalidFormat(t *testing.T) {
+	deps := dependencies{
+		loadConfig: func() (*config.Config, error) { return nil, errors.New("config error") },
+	}
+
+	stderr := captureStderr(t, func() {
+		if got := run([]string{"version", "--format", "xml"}, deps); got != 1 {
+			t.Fatalf("expected exit code 1, got %d", got)
+		}
+	})
+
+	if !strings.Contains(stderr, "must be text, yaml, or json") {
+		t.Fatalf("expected format error, got %q", stderr)
+	}
+}
+
+func TestBinaryVersionCommand(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command(binaryPath, "version")
+	cmd.Env = append(os.Environ(), "TOPSAILAI_DATA_ROOT="+root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("version command failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "topsailai-data") {
+		t.Fatalf("version output missing program name: %s", out)
+	}
+}
+
+func TestBinaryVersionFlagWithoutRoot(t *testing.T) {
+	// The version query must not depend on a usable data root, so an empty
+	// environment still answers successfully.
+	cmd := exec.Command(binaryPath, "--version")
+	cmd.Env = []string{}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("version flag failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "topsailai-data") {
+		t.Fatalf("version output missing program name: %s", out)
+	}
+}

@@ -302,6 +302,7 @@ The CLI is named `topsailai-data`. Commands include:
 
 | Command | Purpose |
 |---------|---------|
+| `version [--format text\|yaml\|json]` | Print the build version, commit, and build date. The values are injected at build time through the linker, so they describe the source the binary was compiled from. A plain `go build` reports `dev` and `unknown` instead of failing. The query is answered before configuration loading, so it works even when the store configuration is broken. `--version`, `-v`, and `-version` are equivalent top-level spellings. |
 | `create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]` | Create a new object. Markdown content is required and must include the mandatory `{object}.md` file; it can be supplied via `--from` or stdin. A description is required and may be provided with `--description` or extracted from the `description` field in the YAML frontmatter of `{object}.md`. If neither source provides a description, creation fails. Optional classify directories may follow the time prefix. |
 | `show <id>` | Display metadata of an object. For `active` objects also display the markdown content and folder structure; for `deleted` or `ceased` objects only metadata is shown. |
 | `update <id> [--description <text>]` | Update an object's metadata. Currently supports updating the description; `--description ""` clears it. |
@@ -322,6 +323,30 @@ Search queries are case-insensitive substring matches against object names, tags
 
 All commands support interactive mode when invoked without inline arguments.
 Write commands always acquire the object lock by default.
+
+### 8.1 Build Version Reporting
+
+The CLI reports the build metadata of the running binary. The values are
+injected at build time through the linker into `pkg/version`, so the binary
+describes the source it was compiled from instead of carrying a hand-maintained
+constant.
+
+- `Version` is the release version, normally a git tag; `Commit` is the git
+  commit; `BuildDate` is the UTC build timestamp in RFC3339 format.
+- The `Makefile` derives the values from git and `date`, and each value can be
+  overridden on the command line, for example `make build VERSION=v1.2.3`.
+- A plain `go build` leaves the values empty. The package then reports `dev`,
+  `unknown`, and `unknown`, so a version query never fails because build
+  metadata is absent.
+- The query is answered before configuration loading and adapter
+  initialization, so it succeeds even when the store configuration is broken or
+  the data root is unavailable. A version query never reads or modifies the
+  store.
+- `version` and the top-level `--version`, `-v`, and `-version` spellings are
+  equivalent. `--format text` prints one human-readable line and is the default;
+  `--format yaml` and `--format json` print the three fields with the stable keys
+  `version`, `commit`, and `build_date`. An unsupported format is rejected with
+  an error and no output.
 
 ## 9. Error Handling
 

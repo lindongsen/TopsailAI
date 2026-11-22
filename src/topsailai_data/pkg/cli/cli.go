@@ -36,6 +36,9 @@ func Run(ctx context.Context, mgr *manager.Manager, args []string) error {
 		printUsage(os.Stdout)
 		return nil
 	}
+	if VersionRequest(args) {
+		return PrintVersion(os.Stdout, args)
+	}
 
 	commands := registeredCommands()
 	for _, cmd := range commands {
@@ -89,6 +92,7 @@ func runInteractive(ctx context.Context, mgr *manager.Manager) error {
 
 func registeredCommands() []Command {
 	return []Command{
+		{Name: "version", Usage: "version [--format text|yaml|json]", Run: runVersion},
 		{Name: "create", Usage: "create <object> [--classify dir1/dir2/...] [--tag tag1,tag2] [--description <text>] [--from <path|->]", Run: runCreate},
 		{Name: "show", Usage: "show <id>", Run: runShow},
 		{Name: "stat", Usage: "stat <id> [--format yaml|json] | stat top [--by read|write|last_read] [--order desc|asc] [--limit n] [--status active|deleted|ceased|all] [--format yaml|json]", Run: runStat},
@@ -122,6 +126,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  put <id> <dest-file> reads from --from <src-file|-> or from redirected stdin.")
 	fmt.Fprintln(w, "  put-archive <id> <archive> reads the archive from the positional argument (use - for stdin).")
 	fmt.Fprintln(w, "  create reads initial object data from --from <path|-> or from redirected stdin.")
+	fmt.Fprintln(w, "  version or --version prints the build version, commit, and build date.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment variables:")
 	fmt.Fprintln(w, "  TOPSAILAI_DATA_ROOT                  root directory for local storage")
