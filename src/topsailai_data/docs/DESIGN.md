@@ -606,6 +606,7 @@ read or write a path outside a data object.
 | `size` | Report a file size in bytes | `<file_path> --object <id>` |
 | `overwrite-lines` | Replace a line range and return a diff | `<file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` |
 | `insert` | Insert content before or after a line and return a diff | `<file_path> <line_num> --object <id> [--content <text>\|--from <path\|->] [--before]` |
+| `delete` | Remove one file | `<file_path> --object <id>` |
 
 ### 20.2 Object Scoping
 
@@ -726,14 +727,15 @@ object.
 
 ### 20.8 Testing
 
-- `pkg/filetool` unit tests cover all thirteen capabilities, including
+- `pkg/filetool` unit tests cover all fourteen capabilities, including
   truncation, whitelist overrides, encoding fallback, line-ending preservation,
-  and the `end_num` sentinel rules.
+  the `end_num` sentinel rules, and single-file removal that refuses a folder.
 - `pkg/objectfs` unit tests cover path normalization, root listing, metadata
-  marker rejection, and statistics integration.
+  marker rejection, statistics integration, and removal that refuses the object
+  root and the payload boundary Markdown.
 - `pkg/cli` tests exercise every subcommand through the command layer with an
   explicit configuration, including a table-driven test proving that all
-  thirteen subcommands reject a missing `--object`.
+  fourteen subcommands reject a missing `--object`.
 - `tests/bdd/features/file-tool.feature` runs the real binary against an
   isolated store. Objects are created through `create` and their content is
   verified through `get`, so the scenarios exercise the public surface end to
@@ -786,3 +788,35 @@ use adapter `StatFile` and `ListFiles` operations. The local adapter answers
 these from filesystem metadata and directory entries, so checking or creating
 a folder does not stream the object's payload archive. Reserved temporary
 replacement paths remain hidden from discovery.
+
+### 20.10 Single-File Removal
+
+`file delete <file_path> --object <id>` removes exactly one file from an
+object's actual data. It exists so a caller does not have to export the whole
+payload, edit it, and put it back merely to drop one file.
+
+The removal is a write, so it takes the object's meta lock for the whole
+operation, updates `UpdatedAt`, and records one write statistic. A competing
+writer fails with `ErrObjectLocked` instead of interleaving its own change.
+
+Four boundaries are enforced, and each one protects a state that would
+otherwise be invalid:
+
+- **The object root is refused.** `file delete "" --object <id>` and
+  `file delete . --object <id>` fail, so a file command never removes the
+  object itself. Removing a whole object is the job of `delete <id>`.
+- **The mandatory `<object>.md` at the object root is refused.** Its presence
+  marks the folder as an object boundary, so removing it would leave a metadata
+  record whose payload is no longer a valid object. A nested file with the same
+  name is ordinary actual data and may be removed.
+- **A folder is refused.** There is no recursive delete, so one command never
+  removes a subtree. Object storage also has no meaningful empty folder, because
+  `mkdirs` seeds an `AGENTS.md` marker.
+- **A missing file returns `ErrObjectNotFound`**, matching `read` and `size`, so
+  a caller can distinguish an absent file from a failed removal.
+
+Parent folders that become empty are removed up to, but never including, the
+object folder. A folder that still holds another file is retained. The reserved
+`.topsailai-data-write-*` namespace stays rejected by the existing filename
+validation, so a caller cannot remove a temporary file that a concurrent write
+may be publishing.

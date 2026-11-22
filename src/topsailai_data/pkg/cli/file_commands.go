@@ -107,6 +107,7 @@ func fileSubcommands() []Command {
 		{Name: "size", Usage: "size <file_path> --object <id>", Run: runFileSize},
 		{Name: "overwrite-lines", Usage: "overwrite-lines <file_path> <start_num> --object <id> [--end n] [--content <text>|--from <path|->]", Run: runFileOverwriteLines},
 		{Name: "insert", Usage: "insert <file_path> <line_num> --object <id> [--content <text>|--from <path|->] [--before]", Run: runFileInsert},
+		{Name: "delete", Usage: "delete <file_path> --object <id>", Run: runFileDelete},
 	}
 }
 
@@ -587,6 +588,35 @@ func runFileInsert(ctx context.Context, mgr *manager.Manager, args []string) err
 		return fmt.Errorf("file insert: %w", err)
 	}
 	fmt.Fprint(os.Stdout, diff)
+	return nil
+}
+
+// runFileDelete implements "file delete".
+//
+// It removes one file inside the object. The object root and the mandatory
+// object Markdown are refused by the layers below, so a caller cannot leave a
+// metadata record whose payload is no longer a valid object. A folder is
+// refused as well, because there is no recursive delete.
+func runFileDelete(ctx context.Context, mgr *manager.Manager, args []string) error {
+	fs := newFlagSet("file delete")
+	objectID := fs.String("object", "", "data object that holds the file (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	remaining := fs.Args()
+	if err := requireArgs(remaining, 1, 1); err != nil {
+		return fmt.Errorf("file delete: %w", err)
+	}
+
+	target, err := objectFS(ctx, mgr, *objectID)
+	if err != nil {
+		return fmt.Errorf("file delete: %w", err)
+	}
+
+	if err := filetool.DeleteFileWithFS(remaining[0], target); err != nil {
+		return fmt.Errorf("file delete: %w", err)
+	}
+	fmt.Fprintln(os.Stdout, "OK")
 	return nil
 }
 
