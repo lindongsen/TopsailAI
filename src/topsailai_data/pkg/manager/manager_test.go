@@ -1451,6 +1451,9 @@ func (e *errorCloseActualDataAdapter) StatFile(ctx context.Context, ref string, 
 func (e *errorCloseActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
 	return nil, nil
 }
+func (e *errorCloseActualDataAdapter) DeleteFile(ctx context.Context, ref string, filename string) error {
+	return nil
+}
 func (e *errorCloseActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	return newRef, nil
 }

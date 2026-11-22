@@ -134,6 +134,13 @@ type ActualDataAdapter interface {
 	// reading their contents. Reserved adapter-internal files are excluded.
 	ListFiles(ctx context.Context, ref string) ([]string, error)
 
+	// DeleteFile removes one file from the object's actual data. It removes a
+	// single regular file, never a folder, and never the mandatory object
+	// Markdown that marks the payload boundary. A missing file returns
+	// errors.ErrObjectNotFound. Parent folders that become empty are removed up
+	// to, but never including, the object folder.
+	DeleteFile(ctx context.Context, ref string, filename string) error
+
 	// Move relocates the actual data for an object to a new adapter-specific reference.
 	// For local adapters newRef is the new relative payload path; source cleanup
 	// is coordinated by the manager after metadata publication.

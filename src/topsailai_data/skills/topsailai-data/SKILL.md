@@ -1235,6 +1235,7 @@ mode: a file command without `--object` is rejected.
 | `size` | `file size <file_path> --object <id>` | Report a file size in bytes. |
 | `overwrite-lines` | `file overwrite-lines <file_path> <start_num> --object <id> [--end n] [--content <text>\|--from <path\|->]` | Replace a line range and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
 | `insert` | `file insert <file_path> <line_num> --object <id> [--content <text>\|--from <path\|->] [--before]` | Insert content before or after a line and print a unified diff. Redirected standard input is read when neither `--content` nor `--from` is given. |
+| `delete` | `file delete <file_path> --object <id>` | Remove one file. The object root, the mandatory `<object>.md` boundary file, and folders are refused. A missing file reports `object not found`. |
 
 ### Examples
 
@@ -1487,6 +1488,58 @@ bin/topsailai-data file size notes/design.md --object project--qrew--skill-hub
 72
 ```
 
+#### Remove one file
+
+`delete` removes exactly one file and prints `OK`. It is the direct way to drop
+a file without exporting and re-importing the whole payload.
+
+```
+bin/topsailai-data file delete notes/old.md --object project--qrew--skill-hub
+```
+
+```text
+OK
+```
+
+Four boundaries are enforced, so a delete can never leave the object in an
+invalid state:
+
+- The object root is refused: `file delete "" --object <id>` and
+  `file delete . --object <id>` fail. Use `delete <id>` to remove a whole
+  object.
+- The mandatory `<object>.md` at the object root is refused, because it marks
+  the payload boundary. A nested file with the same name is ordinary data and
+  can be removed.
+- A folder is refused. There is no recursive delete, so remove files one by one.
+- A missing file reports `object not found`, matching `read` and `size`.
+
+Parent folders that become empty are removed up to, but never including, the
+object folder. A folder that still holds another file is kept.
+
+```
+bin/topsailai-data file delete demo.md --object project--qrew--skill-hub
+```
+
+```text
+error: file delete: delete file: invalid argument: "demo.md" marks the object boundary and cannot be deleted
+```
+
+```
+bin/topsailai-data file delete notes --object project--qrew--skill-hub
+```
+
+```text
+error: file delete: delete file: invalid argument: "notes" is a folder, only files can be deleted
+```
+
+```
+bin/topsailai-data file delete . --object project--qrew--skill-hub
+```
+
+```text
+error: file delete: objectfs: cannot delete the object root
+```
+
 #### Edit a file in place instead of get-edit-put
 
 The `file` group exists so a small edit does not need a full round trip. Read
@@ -1560,6 +1613,9 @@ script can rely on the exit code.
 | Invalid regex in `read-context` | `error: file read-context: invalid parameter: invalid pattern=[: invalid regular expression: ...` |
 | `read` on a folder | `error: file read: read <absolute-path>: is a directory` |
 | Competing writer holds the lock | `error: ... object is locked by another process` |
+| `delete` on the boundary Markdown | `error: file delete: delete file: invalid argument: "<object>.md" marks the object boundary and cannot be deleted` |
+| `delete` on a folder | `error: file delete: delete file: invalid argument: "notes" is a folder, only files can be deleted` |
+| `delete` on the object root | `error: file delete: objectfs: cannot delete the object root` |
 
 A missing folder is not an error for `list-dirs`: the folder is reported with a
 single `Error: ...` entry and the command still exits `0`.
@@ -1637,6 +1693,11 @@ waiting, so an interactive invocation never hangs.
 - `file` with no subcommand prints the subcommand list and exits `0`. `-h` or
   `--help` after a subcommand prints the generic `file` usage line, not that
   subcommand's own flags, so read the table above for exact arguments.
+- `delete` removes exactly one regular file and prints `OK`. It refuses the
+  mandatory `<object>.md` boundary file, any folder, and the object root, so it
+  can never invalidate the object. Empty parent folders created only for the
+  deleted file are removed up to, but never including, the object folder. Use
+  `delete <id>` to remove a whole object.
 
 ### Discovery inside an object
 

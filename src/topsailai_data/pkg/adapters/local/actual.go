@@ -626,6 +626,78 @@ func (a *actualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string
 	return paths, nil
 }
 
+// DeleteFile removes one regular file from the object's actual data.
+//
+// The mandatory object Markdown at the object root is refused, because its
+// presence marks the folder as an object boundary; removing it would leave a
+// metadata record whose payload is no longer a valid object. A folder is
+// refused as well, so this operation never removes more than one file. Parent
+// folders that become empty are removed up to, but never including, the object
+// folder.
+//
+// The caller must retain object custody for the whole removal so a cooperating
+// process cannot interleave its own write.
+func (a *actualDataAdapter) DeleteFile(ctx context.Context, ref string, filename string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	ref, err := a.resolveRef(ref)
+	if err != nil {
+		return err
+	}
+	if err := validateActualFilename(filename); err != nil {
+		return err
+	}
+	if err := rejectBoundaryMarkdown(ref, filename); err != nil {
+		return err
+	}
+	fullPath, err := resolvePayloadFile(ref, filename)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: file %q", errors.ErrObjectNotFound, filename)
+		}
+		return fmt.Errorf("stat file %q: %w", fullPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%w: %q is a folder, only files can be deleted", errors.ErrInvalidArgument, filename)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %q is not a regular file", errors.ErrInvalidArgument, filename)
+	}
+	if err := os.Remove(fullPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: file %q", errors.ErrObjectNotFound, filename)
+		}
+		return fmt.Errorf("remove file %q: %w", fullPath, err)
+	}
+	slog.Info("removed payload file", "path", fullPath, "ref", ref, "file", filename)
+	// RemoveEmptyParents removes the parent of the path it is given, so the
+	// deleted file path is passed to also clean the immediate parent folder.
+	// It stops before the object folder, which always keeps its boundary file.
+	if err := RemoveEmptyParents(fullPath, ref); err != nil {
+		return fmt.Errorf("clean empty payload parents: %w", err)
+	}
+	return nil
+}
+
+// rejectBoundaryMarkdown refuses removal of the mandatory object Markdown that
+// marks the payload boundary. Only the file at the object root is protected; a
+// nested file with the same name is ordinary actual data.
+func rejectBoundaryMarkdown(ref string, filename string) error {
+	clean := filepath.ToSlash(filepath.Clean(filename))
+	if strings.Contains(clean, "/") {
+		return nil
+	}
+	if clean == filepath.Base(ref)+".md" {
+		return fmt.Errorf("%w: %q marks the object boundary and cannot be deleted", errors.ErrInvalidArgument, filename)
+	}
+	return nil
+}
+
 // Move copies the object directory from oldRef to newRef. For the local adapter
 // newRef is the new relative object directory reference. The returned ref is newRef
 // on success. The caller is responsible for deleting the old directory and for

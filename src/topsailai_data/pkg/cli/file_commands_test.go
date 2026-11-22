@@ -97,6 +97,7 @@ func TestFileCommandRequiresObject(t *testing.T) {
 		"size":            {"size", "x.md"},
 		"overwrite-lines": {"overwrite-lines", "x.md", "1", "--content", "c"},
 		"insert":          {"insert", "x.md", "1", "--content", "c"},
+		"delete":          {"delete", "x.md"},
 	}
 	for name, args := range cases {
 		err := runFileCommandError(t, ctx, mgr, args...)
@@ -685,7 +686,7 @@ func TestFileGroupPrintsUsage(t *testing.T) {
 	if !strings.Contains(out, "Usage: topsailai-data file") {
 		t.Fatalf("expected file usage, got %q", out)
 	}
-	for _, name := range []string{"read", "write", "overwrite-lines", "insert", "mkdirs"} {
+	for _, name := range []string{"read", "write", "overwrite-lines", "insert", "mkdirs", "delete"} {
 		if !strings.Contains(out, name) {
 			t.Fatalf("expected usage to list %s, got %q", name, out)
 		}

@@ -366,6 +366,23 @@ func (f *ObjectFS) MkdirAll(p string, _ os.FileMode) error {
 	return nil
 }
 
+// DeleteFile removes one file inside the object.
+//
+// The manager acquires the advisory write lock, removes the file, and records
+// write statistics, so the removal behaves like every other write. The object
+// root and the mandatory object Markdown are refused, because removing either
+// would leave a metadata record whose payload is no longer a valid object.
+func (f *ObjectFS) DeleteFile(p string) error {
+	name, err := normalize(p)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("objectfs: cannot delete the object root")
+	}
+	return f.mgr.DeleteActualFile(f.ctx, f.id, name)
+}
+
 // listAll returns every file path inside the object without reading file data.
 func (f *ObjectFS) listAll() ([]string, error) {
 	return f.mgr.ListActualFiles(f.ctx, f.id)

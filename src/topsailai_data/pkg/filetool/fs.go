@@ -82,6 +82,10 @@ type FS interface {
 
 	// MkdirAll creates a folder and any missing parents.
 	MkdirAll(path string, perm os.FileMode) error
+
+	// DeleteFile removes one file. It removes a single regular file, never a
+	// folder, so a caller cannot accidentally remove a whole subtree.
+	DeleteFile(path string) error
 }
 
 // OSFS implements FS over the operating-system file system.
@@ -325,6 +329,31 @@ func (OSFS) ReadDir(path string) ([]os.DirEntry, error) {
 // MkdirAll creates an operating-system folder.
 func (OSFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+// DeleteFile removes one operating-system file.
+//
+// A folder is refused so this operation never removes a whole subtree, and a
+// missing file is reported as ErrFileNotFound so a caller can distinguish an
+// absent file from a failed removal.
+func (OSFS) DeleteFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrFileNotFound, path)
+		}
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%w: %s is a folder, only files can be deleted", ErrInvalidParameter, path)
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrFileNotFound, path)
+		}
+		return err
+	}
+	return nil
 }
 
 // resolveFS returns the effective file system, falling back to OSFS when the

@@ -530,6 +530,32 @@ func (m *Manager) ListActualFiles(ctx context.Context, id models.ObjectID) ([]st
 	return paths, nil
 }
 
+// DeleteActualFile removes one file from the object's actual data.
+//
+// The whole removal runs under one exclusive object custody, so a cooperating
+// process cannot interleave its own write. The adapter refuses the mandatory
+// object Markdown and any folder, so this operation never removes the payload
+// boundary or more than one file. A successful removal updates the object
+// timestamp and records write statistics exactly like any other write.
+func (m *Manager) DeleteActualFile(ctx context.Context, id models.ObjectID, filename string) error {
+	obj, lock, err := m.lockActiveObject(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer releaseNamespaceLock(lock)
+
+	if err := m.actual.DeleteFile(ctx, obj.DataRef, filename); err != nil {
+		return fmt.Errorf("delete file: %w", err)
+	}
+
+	obj.UpdatedAt = time.Now()
+	if err := m.meta.Update(ctx, obj); err != nil {
+		return err
+	}
+	m.recordWrite(ctx, obj)
+	return nil
+}
+
 // MoveObject moves an active object to a new classify path. The object name
 // does not change. If classify begins with the object's time prefix, that
 // prefix is stripped so users may pass either a classify path or a full path.

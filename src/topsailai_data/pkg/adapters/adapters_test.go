@@ -73,6 +73,9 @@ func (s *stubActualDataAdapter) StatFile(ctx context.Context, ref string, filena
 func (s *stubActualDataAdapter) ListFiles(ctx context.Context, ref string) ([]string, error) {
 	return nil, nil
 }
+func (s *stubActualDataAdapter) DeleteFile(ctx context.Context, ref string, filename string) error {
+	return nil
+}
 func (s *stubActualDataAdapter) Move(ctx context.Context, oldRef string, newRef string) (string, error) {
 	return newRef, nil
 }
