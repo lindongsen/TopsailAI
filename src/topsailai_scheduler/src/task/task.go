@@ -211,6 +211,30 @@ func Load(root string, minRunes int) ([]Task, []LoadError, error) {
 	return tasks, failures, nil
 }
 
+// LoadOne parses one task file without scanning the tree.
+//
+// It exists so a caller can validate a single task. The whole-tree Load is the
+// wrong tool when the question is about one file, and reimplementing the checks
+// at the call site would let the two paths disagree about what a valid task is.
+//
+// yamlPath must name a .yaml file. A file outside root has no task id, so it is
+// rejected rather than reported under a name the daemon would never use.
+func LoadOne(root, yamlPath string, minRunes int) (Task, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return Task{}, fmt.Errorf("resolve tasks root %q: %w", root, err)
+	}
+	absolutePath, err := filepath.Abs(yamlPath)
+	if err != nil {
+		return Task{}, fmt.Errorf("resolve task file %q: %w", yamlPath, err)
+	}
+	if !strings.EqualFold(filepath.Ext(absolutePath), YAMLExt) {
+		return Task{}, fmt.Errorf("%s is not a task configuration file: expected a %s file",
+			absolutePath, YAMLExt)
+	}
+	return loadOne(absoluteRoot, absolutePath, minRunes)
+}
+
 // loadOne parses a single YAML file and resolves its sibling paths.
 //
 // minRunes is the shortest accepted content, supplied by the caller.

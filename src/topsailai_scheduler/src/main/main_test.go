@@ -576,9 +576,12 @@ func TestRunCheckExitsZeroOnCleanTree(t *testing.T) {
 
 // TestRunCheckRejectsPositionalArgument verifies a stray argument is a usage
 // error rather than being silently ignored.
+//
+// One argument now selects a task, so the stray-argument case is two names: the
+// command must refuse to guess which of them was meant.
 func TestRunCheckRejectsPositionalArgument(t *testing.T) {
 	code := captureStdoutCode(t, func() int {
-		return runCheck([]string{"unexpected"})
+		return runCheck([]string{"first", "second"})
 	})
 	if code != exitUsage {
 		t.Fatalf("expected exit %d, got %d", exitUsage, code)
@@ -644,4 +647,241 @@ func captureStdoutCode(t *testing.T, fn func() int) int {
 	var code int
 	captureStdout(t, func() { code = fn() })
 	return code
+}
+
+// TestResolveCheckTargetAcceptsATaskID checks the id form names the YAML file.
+func TestResolveCheckTargetAcceptsATaskID(t *testing.T) {
+	root := t.TempDir()
+
+	path, err := resolveCheckTarget(root, "data/work")
+	if err != nil {
+		t.Fatalf("resolve task id: %v", err)
+	}
+	want := filepath.Join(root, "data", "work.yaml")
+	if path != want {
+		t.Fatalf("resolved %q, want %q", path, want)
+	}
+}
+
+// TestResolveCheckTargetAcceptsARelativePath checks a path is joined to the root.
+func TestResolveCheckTargetAcceptsARelativePath(t *testing.T) {
+	root := t.TempDir()
+
+	path, err := resolveCheckTarget(root, "data/work.yaml")
+	if err != nil {
+		t.Fatalf("resolve relative path: %v", err)
+	}
+	want := filepath.Join(root, "data", "work.yaml")
+	if path != want {
+		t.Fatalf("resolved %q, want %q", path, want)
+	}
+}
+
+// TestResolveCheckTargetDoesNotDoubleTheRoot checks a path that already starts
+// with the tasks root is not prefixed with it a second time.
+//
+// The spelling "tasks/data/work.yaml" is what a user types from the parent of
+// the tasks folder, so joining it to the root produced
+// "tasks/tasks/data/work.yaml" and reported a missing file instead of checking
+// the task.
+func TestResolveCheckTargetDoesNotDoubleTheRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "tasks")
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatalf("create task folder: %v", err)
+	}
+	want := filepath.Join(root, "data", "work.yaml")
+	if err := os.WriteFile(want, []byte("schedule: \"0 8 * * *\"\n"), 0o644); err != nil {
+		t.Fatalf("write task file: %v", err)
+	}
+
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("read working directory: %v", err)
+	}
+	if err := os.Chdir(parent); err != nil {
+		t.Fatalf("enter parent folder: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	path, err := resolveCheckTarget(root, "tasks/data/work.yaml")
+	if err != nil {
+		t.Fatalf("resolve root-relative path: %v", err)
+	}
+	if path != want {
+		t.Fatalf("resolved %q, want %q", path, want)
+	}
+}
+
+// TestResolveCheckTargetKeepsAnAbsolutePath checks an absolute path is not
+// rebased onto the tasks root.
+func TestResolveCheckTargetKeepsAnAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	absolute := filepath.Join(t.TempDir(), "elsewhere", "work.yaml")
+
+	path, err := resolveCheckTarget(root, absolute)
+	if err != nil {
+		t.Fatalf("resolve absolute path: %v", err)
+	}
+	if path != absolute {
+		t.Fatalf("resolved %q, want %q", path, absolute)
+	}
+}
+
+// TestResolveCheckTargetRejectsAnEmptyName checks a blank argument is refused
+// rather than silently resolving to the tasks root.
+func TestResolveCheckTargetRejectsAnEmptyName(t *testing.T) {
+	if _, err := resolveCheckTarget(t.TempDir(), "   "); err == nil {
+		t.Fatal("expected an empty task name to be rejected")
+	}
+}
+
+// TestBuildSingleCheckReportReportsOneValidTask checks a single check reports
+// only the task that was asked for.
+func TestBuildSingleCheckReportReportsOneValidTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"0 8 * * *\"\n", "a harmless task body that is long enough")
+	writeCheckTask(t, root, "data/other", "schedule: \"0 9 * * *\"\n", "another harmless body")
+
+	report, err := buildSingleCheckReport(root, "data/work", 10)
+	if err != nil {
+		t.Fatalf("build single report: %v", err)
+	}
+	if len(report.Tasks) != 1 {
+		t.Fatalf("expected one task, got %d: %+v", len(report.Tasks), report.Tasks)
+	}
+	if report.Valid != 1 || report.Invalid != 0 {
+		t.Fatalf("unexpected counts valid=%d invalid=%d", report.Valid, report.Invalid)
+	}
+	result := findCheckResult(t, report, "data/work")
+	if !result.Valid {
+		t.Fatalf("expected a valid task, got %+v", result)
+	}
+	if result.Schedule != "0 8 * * *" {
+		t.Fatalf("unexpected schedule %q", result.Schedule)
+	}
+}
+
+// TestBuildSingleCheckReportReportsAnInvalidTask checks a broken task is
+// reported with its reason instead of being dropped.
+func TestBuildSingleCheckReportReportsAnInvalidTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"every morning\"\n", "a harmless task body that is long enough")
+
+	report, err := buildSingleCheckReport(root, "data/work", 10)
+	if err != nil {
+		t.Fatalf("build single report: %v", err)
+	}
+	if report.Invalid != 1 || report.Valid != 0 {
+		t.Fatalf("unexpected counts valid=%d invalid=%d", report.Valid, report.Invalid)
+	}
+	result := findCheckResult(t, report, "data/work")
+	if result.Valid {
+		t.Fatalf("expected an invalid task, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "invalid schedule") {
+		t.Fatalf("expected the reason to name the schedule, got %q", result.Error)
+	}
+}
+
+// TestBuildSingleCheckReportReportsAMissingTask checks a task that does not
+// exist is reported as invalid, not as a command failure.
+func TestBuildSingleCheckReportReportsAMissingTask(t *testing.T) {
+	root := t.TempDir()
+
+	report, err := buildSingleCheckReport(root, "data/absent", 10)
+	if err != nil {
+		t.Fatalf("build single report: %v", err)
+	}
+	if report.Invalid != 1 {
+		t.Fatalf("expected one invalid task, got %+v", report)
+	}
+	result := findCheckResult(t, report, "data/absent")
+	if result.Valid {
+		t.Fatalf("expected an invalid task, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "no such file") {
+		t.Fatalf("expected a missing-file reason, got %q", result.Error)
+	}
+}
+
+// TestBuildSingleCheckReportRejectsANonYAMLFile checks a file that is not a task
+// configuration is refused rather than parsed as one.
+func TestBuildSingleCheckReportRejectsANonYAMLFile(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"0 8 * * *\"\n", "a harmless task body that is long enough")
+
+	_, err := buildSingleCheckReport(root, "data/work.md", 10)
+	if err == nil {
+		t.Fatal("expected a non-YAML target to be refused")
+	}
+	if !strings.Contains(err.Error(), "not a task configuration file") {
+		t.Fatalf("expected a wrong-extension reason, got %q", err)
+	}
+}
+
+// TestRunCheckSingleTaskExitsZeroOnAValidTask checks the command accepts a task
+// argument and reports success.
+func TestRunCheckSingleTaskExitsZeroOnAValidTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"0 8 * * *\"\n", "a harmless task body that is long enough")
+
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"--tasks-root", root, "data/work"})
+	})
+	if code != exitOK {
+		t.Fatalf("expected exit %d, got %d", exitOK, code)
+	}
+}
+
+// TestRunCheckSingleTaskExitsNonZeroOnAnInvalidTask checks a broken task makes
+// the command fail so a pipeline can branch on it.
+func TestRunCheckSingleTaskExitsNonZeroOnAnInvalidTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"every morning\"\n", "a harmless task body that is long enough")
+
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"--tasks-root", root, "data/work"})
+	})
+	if code != exitFailure {
+		t.Fatalf("expected exit %d, got %d", exitFailure, code)
+	}
+}
+
+// TestRunCheckRejectsTwoTaskArguments checks the command refuses to guess which
+// of two tasks was meant.
+func TestRunCheckRejectsTwoTaskArguments(t *testing.T) {
+	root := t.TempDir()
+
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"--tasks-root", root, "data/work", "data/other"})
+	})
+	if code != exitUsage {
+		t.Fatalf("expected exit %d, got %d", exitUsage, code)
+	}
+}
+
+// TestRunCheckSingleTaskJSONParses checks the single-task report is valid JSON.
+func TestRunCheckSingleTaskJSONParses(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/work", "schedule: \"0 8 * * *\"\n", "a harmless task body that is long enough")
+
+	output := captureStdout(t, func() {
+		runCheck([]string{"--tasks-root", root, "--json", "data/work"})
+	})
+
+	var report checkReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		t.Fatalf("expected parseable JSON, got %v in %q", err, output)
+	}
+	if report.Valid != 1 || report.Invalid != 0 {
+		t.Fatalf("unexpected counts valid=%d invalid=%d", report.Valid, report.Invalid)
+	}
+	if len(report.Tasks) != 1 || report.Tasks[0].ID != "data/work" {
+		t.Fatalf("unexpected tasks %+v", report.Tasks)
+	}
 }

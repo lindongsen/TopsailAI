@@ -40,8 +40,8 @@ Usage:
   scheduler run [--tasks-root <dir>]
                                 start the scheduler daemon
   scheduler status [--json]     report the state of every task
-  scheduler check [--tasks-root <dir>] [--json]
-                                validate the task tree without a daemon
+  scheduler check [--tasks-root <dir>] [--json] [<task>]
+                                validate the task tree, or one task, without a daemon
   scheduler launch <task> [--wait] [--json]
                                 start one run of a task now
   scheduler stop <task> [--force] [--json]

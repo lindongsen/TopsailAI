@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"topsailai_scheduler/config"
@@ -48,22 +49,28 @@ type checkReport struct {
 	Invalid int `json:"invalid"`
 }
 
-// runCheck validates the task tree without contacting a daemon.
+// runCheck validates the task tree, or one task, without contacting a daemon.
 //
 // The command exists because the only other way to learn that a task file is
 // broken is to start the daemon and read its status or log. A checker that needs
 // the very service it is meant to validate cannot be used in a pre-commit hook
 // or a CI step, which is where a broken task file should be caught.
+//
+// A positional argument selects one task, so a single file can be checked while
+// the rest of the tree is still being edited. The argument is a task id or a
+// path to the YAML file; both name the same task, and accepting only one of them
+// would make the command awkward to use from an editor and from a script.
 func runCheck(args []string) int {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	tasksRoot := flags.String("tasks-root", "", "tasks folder, overrides "+config.EnvTasksRoot)
 	asJSON := flags.Bool("json", false, "print the result as JSON")
-	if _, err := parseFlags(flags, args); err != nil {
+	positional, err := parseFlags(flags, args)
+	if err != nil {
 		return exitUsage
 	}
-	if flags.NArg() > 0 {
-		return usageError("check takes no arguments, got %q", flags.Args())
+	if len(positional) > 1 {
+		return usageError("check takes at most one task, got %q", positional)
 	}
 
 	cfg, err := config.Load()
@@ -80,7 +87,12 @@ func runCheck(args []string) int {
 		return fail("%v", err)
 	}
 
-	report, err := buildCheckReport(root, cfg.MinContentRunes)
+	var report checkReport
+	if len(positional) == 1 {
+		report, err = buildSingleCheckReport(root, positional[0], cfg.MinContentRunes)
+	} else {
+		report, err = buildCheckReport(root, cfg.MinContentRunes)
+	}
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -99,6 +111,99 @@ func runCheck(args []string) int {
 		return exitFailure
 	}
 	return exitOK
+}
+
+// buildSingleCheckReport validates the one task named by target.
+//
+// target is a task id such as "data/work" or a path to the YAML file. A path is
+// resolved against the tasks root when it is relative, so both forms name the
+// same task and produce the same id in the report.
+//
+// A target that names no file is reported as invalid rather than as an error:
+// "this task does not exist" is an answer to the question that was asked, and a
+// caller checking a task it just wrote needs that answer in the same shape as
+// any other rejection.
+func buildSingleCheckReport(root, target string, minRunes int) (checkReport, error) {
+	report := checkReport{TasksRoot: root, Tasks: []checkResult{}}
+
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		report.TasksRootExists = true
+	}
+
+	yamlPath, err := resolveCheckTarget(root, target)
+	if err != nil {
+		return checkReport{}, err
+	}
+
+	loaded, loadErr := task.LoadOne(root, yamlPath, minRunes)
+	if loadErr != nil {
+		id, idErr := task.IDFor(root, yamlPath)
+		if idErr != nil {
+			// A file outside the root cannot have a task id. Reporting the path
+			// keeps the entry identifiable instead of dropping it.
+			id = yamlPath
+		}
+		report.Tasks = append(report.Tasks, checkResult{
+			ID:    id,
+			Path:  yamlPath,
+			Valid: false,
+			Error: loadErr.Error(),
+		})
+		report.Invalid++
+		return report, nil
+	}
+
+	enabled := loaded.Spec.IsEnabled()
+	report.Tasks = append(report.Tasks, checkResult{
+		ID:       loaded.ID,
+		Path:     loaded.YAMLPath,
+		Valid:    true,
+		Enabled:  &enabled,
+		Schedule: loaded.Spec.Schedule,
+	})
+	report.Valid++
+	return report, nil
+}
+
+// resolveCheckTarget turns a task id or a file path into an absolute YAML path.
+//
+// A target ending in .yaml is treated as a path, because a task id never carries
+// an extension. Everything else is a task id and is joined to the tasks root, so
+// "data/work" and "tasks/data/work.yaml" reach the same file.
+//
+// A relative path is resolved against the working directory first and against
+// the tasks root second. Both spellings are natural: a shell user types the path
+// they see, while an editor or a script often knows only the path inside the
+// tasks root. Trying the working directory first keeps "tasks/data/work.yaml"
+// from becoming "tasks/tasks/data/work.yaml".
+//
+// A target carrying some other extension is refused rather than having .yaml
+// appended: "data/work.md" names the content file, and turning it into
+// "data/work.md.yaml" would report a missing file instead of the real mistake.
+func resolveCheckTarget(root, target string) (string, error) {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return "", fmt.Errorf("task name is empty")
+	}
+	extension := filepath.Ext(trimmed)
+	if extension == "" {
+		return filepath.Join(root, filepath.FromSlash(trimmed)+task.YAMLExt), nil
+	}
+	if !strings.EqualFold(extension, task.YAMLExt) {
+		return "", fmt.Errorf("%s is not a task configuration file: expected a %s file",
+			trimmed, task.YAMLExt)
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed), nil
+	}
+
+	fromWorkingDirectory, err := filepath.Abs(trimmed)
+	if err == nil {
+		if _, statErr := os.Stat(fromWorkingDirectory); statErr == nil {
+			return fromWorkingDirectory, nil
+		}
+	}
+	return filepath.Join(root, trimmed), nil
 }
 
 // buildCheckReport loads the task tree and turns the result into a report.
