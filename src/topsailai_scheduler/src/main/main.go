@@ -5,12 +5,15 @@
 //
 //	run      start the scheduler daemon and its control socket
 //	status   report the state of every task
+//	check    validate the task tree without a running daemon
 //	launch   start one run of a task now
 //	stop     actively stop a running task
 //
 // The CLI never imports the daemon: status, launch and stop talk to the running
 // daemon through the control socket, so the same contract serves any future
-// transport.
+// transport. check is the exception by design: it validates the task files
+// directly, because a checker that needs the service it validates cannot run in
+// a pre-commit hook or a CI step.
 package main
 
 import (
@@ -37,6 +40,8 @@ Usage:
   scheduler run [--tasks-root <dir>]
                                 start the scheduler daemon
   scheduler status [--json]     report the state of every task
+  scheduler check [--tasks-root <dir>] [--json]
+                                validate the task tree without a daemon
   scheduler launch <task> [--wait] [--json]
                                 start one run of a task now
   scheduler stop <task> [--force] [--json]
@@ -89,6 +94,8 @@ func run(args []string) int {
 		return runDaemon(args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "check":
+		return runCheck(args[1:])
 	case "launch":
 		return runLaunch(args[1:])
 	case "stop":
@@ -123,18 +130,47 @@ func usageError(format string, args ...any) int {
 // The standard flag package stops at the first non-flag argument, so
 // "launch demo/hello --wait" would treat --wait as a second task id. Reordering
 // the arguments keeps the natural command line working without a custom parser.
+//
+// A flag that takes a value keeps that value attached while reordering. Without
+// that, "check --tasks-root dir --json" would move --json next to --tasks-root,
+// the value would be read as the flag name, and a valid command line would turn
+// into a usage error.
 func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 	ordered := make([]string, 0, len(args))
 	positional := make([]string, 0, len(args))
-	for _, argument := range args {
-		if strings.HasPrefix(argument, "-") && argument != "-" {
-			ordered = append(ordered, argument)
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if !strings.HasPrefix(argument, "-") || argument == "-" {
+			positional = append(positional, argument)
 			continue
 		}
-		positional = append(positional, argument)
+		ordered = append(ordered, argument)
+		if takesSeparateValue(flags, argument) && index+1 < len(args) {
+			index++
+			ordered = append(ordered, args[index])
+		}
 	}
 	if err := flags.Parse(append(ordered, positional...)); err != nil {
 		return nil, err
 	}
 	return flags.Args(), nil
+}
+
+// takesSeparateValue reports whether argument is a flag whose value is the next
+// command-line word.
+//
+// A flag written as "--name=value" carries its own value, and a boolean flag
+// never consumes the next word. An unknown flag is treated as boolean so the
+// flag package reports it rather than this helper swallowing the argument that
+// follows it.
+func takesSeparateValue(flags *flag.FlagSet, argument string) bool {
+	if strings.Contains(argument, "=") {
+		return false
+	}
+	defined := flags.Lookup(strings.TrimLeft(argument, "-"))
+	if defined == nil {
+		return false
+	}
+	boolean, isBoolean := defined.Value.(interface{ IsBoolFlag() bool })
+	return !isBoolean || !boolean.IsBoolFlag()
 }

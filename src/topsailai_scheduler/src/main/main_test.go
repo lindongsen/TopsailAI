@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io"
 	"os"
@@ -376,4 +377,271 @@ func TestResolveDefaultProviderPathKeepsAnAbsolutePath(t *testing.T) {
 	if path != "/opt/providers/mock/bin/mock" {
 		t.Fatalf("unexpected path %q", path)
 	}
+}
+
+// TestParseFlagsKeepsValueFlagAttached verifies a flag that takes a value keeps
+// its value while the arguments are reordered.
+//
+// Without this, "check --tasks-root dir --json" would move --json next to
+// --tasks-root, the value would be read as a flag name, and a valid command line
+// would fail as a usage error.
+func TestParseFlagsKeepsValueFlagAttached(t *testing.T) {
+	flags := flag.NewFlagSet("check", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	root := flags.String("tasks-root", "", "root")
+	asJSON := flags.Bool("json", false, "json")
+
+	positional, err := parseFlags(flags, []string{"--tasks-root", "some/dir", "--json"})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if *root != "some/dir" {
+		t.Fatalf("unexpected tasks root %q", *root)
+	}
+	if !*asJSON {
+		t.Fatal("expected --json to be set")
+	}
+	if len(positional) != 0 {
+		t.Fatalf("expected no positional arguments, got %q", positional)
+	}
+}
+
+// TestParseFlagsKeepsValueFlagBeforePositional verifies a value flag followed by
+// a positional argument does not consume it.
+func TestParseFlagsKeepsValueFlagBeforePositional(t *testing.T) {
+	flags := flag.NewFlagSet("check", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	root := flags.String("tasks-root", "", "root")
+
+	positional, err := parseFlags(flags, []string{"--tasks-root", "some/dir", "extra"})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if *root != "some/dir" {
+		t.Fatalf("unexpected tasks root %q", *root)
+	}
+	if len(positional) != 1 || positional[0] != "extra" {
+		t.Fatalf("unexpected positional arguments %q", positional)
+	}
+}
+
+// TestParseFlagsAcceptsJoinedValue verifies the "--name=value" form still works,
+// because that form carries its own value and must not consume the next word.
+func TestParseFlagsAcceptsJoinedValue(t *testing.T) {
+	flags := flag.NewFlagSet("check", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	root := flags.String("tasks-root", "", "root")
+	asJSON := flags.Bool("json", false, "json")
+
+	positional, err := parseFlags(flags, []string{"--tasks-root=some/dir", "--json"})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if *root != "some/dir" {
+		t.Fatalf("unexpected tasks root %q", *root)
+	}
+	if !*asJSON {
+		t.Fatal("expected --json to be set")
+	}
+	if len(positional) != 0 {
+		t.Fatalf("expected no positional arguments, got %q", positional)
+	}
+}
+
+// TestBuildCheckReportSeparatesValidAndInvalid verifies a clean task and a
+// rejected file are both reported, with the reason attached to the rejected one.
+//
+// Reporting only the failures would make "no output" ambiguous between a clean
+// tree and a checker that did not run.
+func TestBuildCheckReportSeparatesValidAndInvalid(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "data/good", "schedule: \"0 8 * * *\"\n", "a complete task content that is long enough")
+	writeCheckTask(t, root, "data/bad", "schedule: \"every morning\"\n", "a complete task content that is long enough")
+
+	report, err := buildCheckReport(root, 30)
+	if err != nil {
+		t.Fatalf("buildCheckReport failed: %v", err)
+	}
+	if !report.TasksRootExists {
+		t.Fatal("expected the tasks root to be reported as present")
+	}
+	if report.Valid != 1 || report.Invalid != 1 {
+		t.Fatalf("unexpected counts valid=%d invalid=%d", report.Valid, report.Invalid)
+	}
+	if len(report.Tasks) != 2 {
+		t.Fatalf("expected both tasks to be reported, got %d", len(report.Tasks))
+	}
+
+	good := findCheckResult(t, report, "data/good")
+	if !good.Valid {
+		t.Fatalf("expected data/good to be valid, got %q", good.Error)
+	}
+	if good.Enabled == nil || !*good.Enabled {
+		t.Fatal("expected data/good to be reported as enabled")
+	}
+
+	bad := findCheckResult(t, report, "data/bad")
+	if bad.Valid {
+		t.Fatal("expected data/bad to be invalid")
+	}
+	if !strings.Contains(bad.Error, "every morning") {
+		t.Fatalf("expected the reason to name the expression, got %q", bad.Error)
+	}
+	if bad.Enabled != nil {
+		t.Fatal("expected a rejected task to omit the enabled flag")
+	}
+}
+
+// TestBuildCheckReportReportsDisabledTask verifies a disabled task is valid but
+// distinguishable from an enabled one.
+func TestBuildCheckReportReportsDisabledTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "off", "schedule: \"0 8 * * *\"\nenabled: false\n", "a complete task content that is long enough")
+
+	report, err := buildCheckReport(root, 30)
+	if err != nil {
+		t.Fatalf("buildCheckReport failed: %v", err)
+	}
+	if report.Valid != 1 || report.Invalid != 0 {
+		t.Fatalf("unexpected counts valid=%d invalid=%d", report.Valid, report.Invalid)
+	}
+	result := findCheckResult(t, report, "off")
+	if result.Enabled == nil || *result.Enabled {
+		t.Fatal("expected the task to be reported as disabled")
+	}
+}
+
+// TestBuildCheckReportMissingRootIsEmpty verifies a missing tasks folder is an
+// empty result rather than an error, matching how the daemon treats it.
+func TestBuildCheckReportMissingRootIsEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "absent")
+
+	report, err := buildCheckReport(root, 30)
+	if err != nil {
+		t.Fatalf("buildCheckReport failed: %v", err)
+	}
+	if report.TasksRootExists {
+		t.Fatal("expected the missing root to be reported as absent")
+	}
+	if len(report.Tasks) != 0 || report.Valid != 0 || report.Invalid != 0 {
+		t.Fatalf("expected an empty report, got %+v", report)
+	}
+}
+
+// TestBuildCheckReportSortsByID verifies the report is ordered so the output is
+// stable between runs.
+func TestBuildCheckReportSortsByID(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "z/last", "schedule: \"0 8 * * *\"\n", "a complete task content that is long enough")
+	writeCheckTask(t, root, "a/first", "schedule: \"0 8 * * *\"\n", "a complete task content that is long enough")
+
+	report, err := buildCheckReport(root, 30)
+	if err != nil {
+		t.Fatalf("buildCheckReport failed: %v", err)
+	}
+	if len(report.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(report.Tasks))
+	}
+	if report.Tasks[0].ID != "a/first" || report.Tasks[1].ID != "z/last" {
+		t.Fatalf("unexpected order %q, %q", report.Tasks[0].ID, report.Tasks[1].ID)
+	}
+}
+
+// TestRunCheckExitsNonZeroOnInvalidTask verifies the exit code reflects the
+// result, so a pipeline does not have to parse the output.
+func TestRunCheckExitsNonZeroOnInvalidTask(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "bad", "schedule: \"every morning\"\n", "a complete task content that is long enough")
+
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"--tasks-root", root})
+	})
+	if code != exitFailure {
+		t.Fatalf("expected exit %d, got %d", exitFailure, code)
+	}
+}
+
+// TestRunCheckExitsZeroOnCleanTree verifies a clean tree succeeds.
+func TestRunCheckExitsZeroOnCleanTree(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "good", "schedule: \"0 8 * * *\"\n", "a complete task content that is long enough")
+
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"--tasks-root", root})
+	})
+	if code != exitOK {
+		t.Fatalf("expected exit %d, got %d", exitOK, code)
+	}
+}
+
+// TestRunCheckRejectsPositionalArgument verifies a stray argument is a usage
+// error rather than being silently ignored.
+func TestRunCheckRejectsPositionalArgument(t *testing.T) {
+	code := captureStdoutCode(t, func() int {
+		return runCheck([]string{"unexpected"})
+	})
+	if code != exitUsage {
+		t.Fatalf("expected exit %d, got %d", exitUsage, code)
+	}
+}
+
+// TestRunCheckJSONParses verifies the JSON form is a single parseable document,
+// because a caller reads it with a JSON parser rather than by eye.
+func TestRunCheckJSONParses(t *testing.T) {
+	root := t.TempDir()
+	writeCheckTask(t, root, "bad", "schedule: \"every morning\"\n", "a complete task content that is long enough")
+
+	output := captureStdout(t, func() {
+		runCheck([]string{"--tasks-root", root, "--json"})
+	})
+
+	var report checkReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		t.Fatalf("expected parseable JSON, got %v in %q", err, output)
+	}
+	if report.Invalid != 1 {
+		t.Fatalf("expected 1 invalid task, got %d", report.Invalid)
+	}
+	if len(report.Tasks) != 1 || report.Tasks[0].ID != "bad" {
+		t.Fatalf("unexpected tasks %+v", report.Tasks)
+	}
+}
+
+// writeCheckTask writes one task pair under root.
+func writeCheckTask(t *testing.T, root, id, yamlContent, markdown string) {
+	t.Helper()
+
+	yamlPath := filepath.Join(root, id+".yaml")
+	markdownPath := filepath.Join(root, id+".md")
+	if err := os.MkdirAll(filepath.Dir(yamlPath), 0o755); err != nil {
+		t.Fatalf("create task folder: %v", err)
+	}
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write task yaml: %v", err)
+	}
+	if err := os.WriteFile(markdownPath, []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write task markdown: %v", err)
+	}
+}
+
+// findCheckResult returns the reported task with the given id.
+func findCheckResult(t *testing.T, report checkReport, id string) checkResult {
+	t.Helper()
+
+	for _, result := range report.Tasks {
+		if result.ID == id {
+			return result
+		}
+	}
+	t.Fatalf("task %q is missing from the report", id)
+	return checkResult{}
+}
+
+// captureStdoutCode runs fn with os.Stdout redirected and returns its exit code.
+func captureStdoutCode(t *testing.T, fn func() int) int {
+	t.Helper()
+
+	var code int
+	captureStdout(t, func() { code = fn() })
+	return code
 }
