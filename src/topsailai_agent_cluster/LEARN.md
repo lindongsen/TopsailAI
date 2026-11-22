@@ -2117,3 +2117,47 @@ Why this prevents recurrence: a directory with one file looks complete, so nothi
 input. The build succeeds with the wrong content, and the only symptom appears later on the node. The
 role dimension is invisible until a machine runs two roles, which is exactly the machine an operator
 is least likely to test.
+
+## A parity test in one direction cannot find a capability that exists only on one surface
+
+Trigger: the project already had `TestEveryAdvertisedStandaloneCommandIsDispatched`, which proves every
+command the standalone help advertises is accepted by the standalone dispatcher. That test was green
+while three capabilities were reachable only from the REPL: the model registry and model set
+operations, resume by provider session handle, and endpoint-scope `command.exec`. All three were
+advertised in the capability set, all three worked interactively, and none had a standalone spelling.
+
+Action: when two surfaces are meant to offer the same capabilities, write the comparison in both
+directions. The forward direction (everything advertised is dispatched) catches help that promises a
+command the binary rejects. The reverse direction (every canonical command has a path on the other
+surface, or a recorded exception) catches a capability that exists on one surface only, because such a
+capability is simply absent from the other surface's help and nothing compares the two. Drive the
+reverse direction from the canonical registry rather than a hand-written list, so a newly registered
+command is checked immediately, and keep the exception set as data with a reason per entry plus a test
+that every entry is still both canonical and genuinely absent.
+
+Why this prevents recurrence: a one-directional test looks complete because it names the rule it
+enforces, and the rule it enforces is real. The gap it cannot see is structural rather than accidental:
+the missing capability leaves no trace on the surface that lacks it, so no assertion about that surface
+can fail. The exception set is what makes the reverse direction usable, and the second test on the
+exception set is what stops it from rotting into a list of names that no longer mean anything.
+
+## A documented surface must be read from the catalog, not recalled
+
+Trigger: five rows were added to `docs/cli-command-surface-rules.md` describing the model and project
+operations on both surfaces. The interactive spellings were written from memory and were wrong:
+`model registry [endpoint]` was invented, because the interactive surface has no `registry` subcommand
+at all and reaches the registry with a bare `model` outside session scope. The table is the document
+that records which spellings are verified, so a wrong row is worse than a missing one.
+
+Action: when a document states a command's spelling, read the spelling from the catalog that the
+dispatcher uses, then verify the written value is a substring of that catalog entry by a scripted
+check rather than by eye. Do this for both surfaces, because they are separate sources: the interactive
+catalog is `commandHelpCatalog` and the standalone overrides live in `nonInteractiveHelpEntry`. A
+spelling that cannot be found in either is invented, whatever it looks like.
+
+Why this prevents recurrence: a plausible spelling is indistinguishable from a real one when read, and
+the table's own header claims every row was verified, so the wrong row borrows that credibility. The
+failure is silent in the direction that matters: an operator who copies the documented spelling gets a
+usage error, and the document that was supposed to prevent exactly that is the thing that caused it.
+This is the same class as recording a capability gap without checking the provider's real surface, but
+it runs the other way: there the gap was assumed, here the spelling was assumed.
