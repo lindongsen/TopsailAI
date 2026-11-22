@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,8 +31,19 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RescanInterval != DefaultRescanInterval {
 		t.Errorf("expected rescan interval %v, got %v", DefaultRescanInterval, cfg.RescanInterval)
 	}
-	if cfg.ControlSocket != DefaultControlSocket {
-		t.Errorf("expected control socket %q, got %q", DefaultControlSocket, cfg.ControlSocket)
+	// The default socket is anchored to the home directory so every daemon on
+	// this machine agrees on one path, which is what makes the single-instance
+	// guard effective.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home directory: %v", err)
+	}
+	wantSocket := filepath.Join(home, DefaultControlSocketDir, DefaultControlSocketName)
+	if cfg.ControlSocket != wantSocket {
+		t.Errorf("expected control socket %q, got %q", wantSocket, cfg.ControlSocket)
+	}
+	if !filepath.IsAbs(cfg.ControlSocket) {
+		t.Errorf("expected an absolute default control socket, got %q", cfg.ControlSocket)
 	}
 	if cfg.DefaultProviderPath != "" {
 		t.Errorf("expected an empty default provider path, got %q", cfg.DefaultProviderPath)

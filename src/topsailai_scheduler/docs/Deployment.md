@@ -61,22 +61,22 @@ twice, and a control-socket guard that refuses to start when another scheduler
 already answers on the same socket path.
 
 The socket guard is only effective when both instances resolve the same socket
-path. Because the default socket path is relative to the working directory, two
-daemons started from different directories each bind their own socket and both
-schedule the same task tree. The unit avoids this by pinning both
-`WorkingDirectory` and `SCHEDULER_CONTROL_SOCKET`.
+path. The default is `$HOME/.topsailai/scheduler.sock`, an absolute path that
+does not depend on the working directory, so two daemons started from different
+directories collide on the same socket and the second one is refused. This is a
+code-level guarantee, not a unit-file convention: the unit no longer sets
+`SCHEDULER_CONTROL_SOCKET` at all.
 
 Starting a second instance manually against the running service is refused:
 
 ```text
 control socket stopped: control socket
-"/TopsailAI/src/topsailai_scheduler/.tmp/scheduler.sock" is already in use by a
-running scheduler
+"/root/.topsailai/scheduler.sock" is already in use by a running scheduler
 ```
 
 ## Known limitation
 
-`make clean` deletes `.tmp/topsailai_scheduler`, which is the unit's
-`ExecStart` target. Running it while the service is enabled leaves the unit
-unable to start until the next build. Run `make build` afterwards, or avoid
-`make clean` on a host where the service is enabled.
+`make clean` deletes `bin/topsailai_scheduler`, which is the unit's `ExecStart`
+target. Running it while the service is enabled leaves the unit unable to start
+until the next build. Run `make build` afterwards, or avoid `make clean` on a
+host where the service is enabled.

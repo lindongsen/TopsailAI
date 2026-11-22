@@ -63,9 +63,14 @@ const (
 	// failing on every trigger. Thirty characters is roughly one complete
 	// instruction in Chinese and a short sentence in English.
 	DefaultMinContentRunes = 30
-	// DefaultControlSocket is resolved against the working directory, so each
-	// project gets its own socket instead of sharing one global path.
-	DefaultControlSocket = "scheduler.sock"
+	// DefaultControlSocketDir is the folder the default control socket lives in.
+	// It sits under the user's home so one machine has one well-known socket
+	// path, which is what makes the single-instance guard effective: two
+	// daemons started from different working directories still collide on the
+	// same socket instead of each binding its own.
+	DefaultControlSocketDir = ".topsailai"
+	// DefaultControlSocketName is the socket file name inside that folder.
+	DefaultControlSocketName = "scheduler.sock"
 )
 
 // Config is the complete scheduler configuration.
@@ -117,6 +122,30 @@ type Config struct {
 	MinContentRunes int
 }
 
+// DefaultControlSocketPath returns the default control socket path, which lives
+// in a fixed folder under the user's home directory.
+//
+// A home-anchored path is deliberate. The socket is what stops a second daemon
+// from starting, and that guard only works when both daemons resolve the same
+// path. A path relative to the working directory gave every folder its own
+// socket, so two daemons started from different folders both ran and both
+// scheduled the same tasks. Anchoring to the home directory makes the path
+// independent of where the process was started.
+//
+// An unset HOME is an error rather than a fallback to the working directory,
+// because silently returning to the old relative behaviour would restore the
+// duplicate-daemon hole without any visible sign.
+func DefaultControlSocketPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for the default control socket: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("resolve home directory for the default control socket: home is empty")
+	}
+	return filepath.Join(home, DefaultControlSocketDir, DefaultControlSocketName), nil
+}
+
 // Load reads the configuration from the environment.
 //
 // Every value has a default, so an empty environment yields a usable
@@ -126,6 +155,13 @@ func Load() (Config, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	// The default socket is resolved from the home directory, not the working
+	// directory, so every daemon on this machine agrees on one socket path.
+	controlSocket, err := DefaultControlSocketPath()
+	if err != nil {
+		return Config{}, err
 	}
 
 	cfg := Config{
@@ -141,7 +177,7 @@ func Load() (Config, error) {
 		RescanInterval:      DefaultRescanInterval,
 		ShutdownGrace:       DefaultShutdownGrace,
 		MaxOutputBytes:      DefaultMaxOutputBytes,
-		ControlSocket:       DefaultControlSocket,
+		ControlSocket:       controlSocket,
 		PollInterval:        DefaultPollInterval,
 		ProviderCallTimeout: DefaultProviderCallTimeout,
 		MinContentRunes:     DefaultMinContentRunes,
@@ -256,8 +292,12 @@ func (c Config) AbsoluteTasksRoot() (string, error) {
 	return absolute, nil
 }
 
-// AbsoluteControlSocket resolves the control socket against the working
-// directory, so a relative socket path follows the project it belongs to.
+// AbsoluteControlSocket resolves the control socket to an absolute path.
+//
+// The default is already absolute because it is anchored to the home directory.
+// An explicitly configured relative value is still resolved against the working
+// directory, which keeps the existing behaviour for a caller that deliberately
+// wants a project-local socket.
 func (c Config) AbsoluteControlSocket() (string, error) {
 	if filepath.IsAbs(c.ControlSocket) {
 		return filepath.Clean(c.ControlSocket), nil

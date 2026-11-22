@@ -1,0 +1,6 @@
+# The scheduler binary built by `make build`.
+#
+# The leading slash anchors this to the project root on purpose. A bare `bin/`
+# would also match providers/mock/bin/ and providers/scheduler-provider-topsailai/bin/,
+# which hold provider executables that are tracked in the repository.
+/bin/

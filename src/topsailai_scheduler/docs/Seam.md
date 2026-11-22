@@ -109,9 +109,11 @@ A line is used rather than a length prefix because it is readable with ordinary
 tools and needs no framing code on either side.
 
 The socket path comes from `SCHEDULER_CONTROL_SOCKET`, defaulting to
-`scheduler.sock` in the working directory. A relative path is resolved against
-the working directory, so each project folder gets its own daemon instead of
-sharing one global socket.
+`$HOME/.topsailai/scheduler.sock`. The default is absolute and anchored to the
+home directory, so every daemon on the machine agrees on one path and a second
+daemon started from any folder is refused instead of binding its own socket. An
+explicitly configured relative path still resolves against the working
+directory.
 
 ## The launcher seam
 

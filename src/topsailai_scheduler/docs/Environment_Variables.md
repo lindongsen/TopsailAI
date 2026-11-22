@@ -22,7 +22,7 @@ All variables use the `SCHEDULER_` prefix.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SCHEDULER_TASKS_ROOT` | `tasks` | Root of the task tree. Relative paths resolve against the working directory. The `run --tasks-root` flag takes precedence when both are set. |
-| `SCHEDULER_CONTROL_SOCKET` | `scheduler.sock` | Unix socket the daemon listens on and the CLI connects to. Relative paths resolve against the working directory, so each project folder gets its own daemon. |
+| `SCHEDULER_CONTROL_SOCKET` | `$HOME/.topsailai/scheduler.sock` | Unix socket the daemon listens on and the CLI connects to. The default is absolute and independent of the working directory, so one machine has one scheduler socket and a second daemon started from any folder is refused. An explicitly configured relative path still resolves against the working directory. |
 
 ## Logging
 

@@ -1,8 +1,8 @@
 # Makefile for the scheduler project.
 #
 # Every target is a thin wrapper around the Go toolchain so the same commands
-# work locally and in CI. Build artifacts go to .tmp/ so the source tree stays
-# clean.
+# work locally and in CI. The built binary goes to bin/ so it has one predictable
+# location; test artifacts go to .tmp/ so the source tree stays clean.
 
 # GO is overridable so a specific toolchain can be selected without editing.
 GO ?= go
@@ -10,8 +10,9 @@ GO ?= go
 # different toolchain mid-build.
 export GOTOOLCHAIN := local
 
-# BIN is the built scheduler binary.
-BIN := .tmp/topsailai_scheduler
+# BIN is the built scheduler binary. It lives in bin/ so the systemd unit and
+# every script can name one stable path instead of a build-internal folder.
+BIN := bin/topsailai_scheduler
 # COVERPROFILE is the coverage output, kept out of the source tree.
 COVERPROFILE := .tmp/coverage.out
 
@@ -21,7 +22,7 @@ all: check
 
 # build compiles the scheduler binary.
 build:
-	@mkdir -p .tmp
+	@mkdir -p bin
 	cd src && $(GO) build -o ../$(BIN) ./main
 
 # test runs every test with the race detector.
@@ -65,4 +66,4 @@ service:
 
 # clean removes build and test artifacts.
 clean:
-	rm -rf .tmp/topsailai_scheduler .tmp/coverage.out
+	rm -rf $(BIN) .tmp/coverage.out

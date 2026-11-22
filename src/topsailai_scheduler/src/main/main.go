@@ -59,7 +59,8 @@ so tasks/data/work.yaml is the task "data/work".
 Environment:
   SCHEDULER_TASKS_ROOT          tasks folder, default "tasks"
                                 (--tasks-root on "run" takes precedence)
-  SCHEDULER_CONTROL_SOCKET      control socket, default "scheduler.sock"
+  SCHEDULER_CONTROL_SOCKET      control socket, default
+                                "$HOME/.topsailai/scheduler.sock"
   SCHEDULER_LOG_LEVEL           debug, info, warn or error
   SCHEDULER_LOG_OUTPUT          stdout, stderr or a file path
   SCHEDULER_MAX_CONCURRENT      runs allowed at the same time

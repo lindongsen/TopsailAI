@@ -39,19 +39,19 @@ grouping and may nest arbitrarily; they do not affect scheduling.
 ## Quick start
 
 ```bash
-make build          # build .tmp/topsailai_scheduler
+make build          # build bin/topsailai_scheduler
 make check          # gofmt, vet, and the full test suite
-./.tmp/topsailai_scheduler run
+./bin/topsailai_scheduler run
 ```
 
 In another shell, in the same folder:
 
 ```bash
-./.tmp/topsailai_scheduler status
-./.tmp/topsailai_scheduler launch data/work --wait
-./.tmp/topsailai_scheduler stop data/work
-./.tmp/topsailai_scheduler check
-./.tmp/topsailai_scheduler check data/work
+./bin/topsailai_scheduler status
+./bin/topsailai_scheduler launch data/work --wait
+./bin/topsailai_scheduler stop data/work
+./bin/topsailai_scheduler check
+./bin/topsailai_scheduler check data/work
 ```
 
 `check` validates the task tree without a daemon, so it can run in CI or before a
@@ -59,8 +59,10 @@ restart. It reports every task with its reason and exits non-zero when any task 
 invalid. Given one task id or path it validates only that task.
 
 The CLI finds the daemon through `SCHEDULER_CONTROL_SOCKET`, which defaults to
-`scheduler.sock` in the working directory, so each project folder gets its own
-daemon.
+`$HOME/.topsailai/scheduler.sock`. The path is absolute and independent of the
+working directory, so one machine has one scheduler socket and a second daemon
+started from any folder is refused instead of quietly running alongside the
+first.
 
 ## Choosing the tasks folder
 
@@ -69,10 +71,10 @@ it, and the command line wins:
 
 ```bash
 # environment variable, applies to every command
-SCHEDULER_TASKS_ROOT=/srv/jobs ./.tmp/topsailai_scheduler run
+SCHEDULER_TASKS_ROOT=/srv/jobs ./bin/topsailai_scheduler run
 
 # command-line flag, applies to this daemon only
-./.tmp/topsailai_scheduler run --tasks-root /srv/jobs
+./bin/topsailai_scheduler run --tasks-root /srv/jobs
 ```
 
 When both are set, `--tasks-root` takes precedence. That ordering lets one
@@ -177,7 +179,7 @@ The default provider is required, because a scheduler with no provider cannot ru
 anything:
 
 ```bash
-SCHEDULER_DEFAULT_PROVIDER_PATH=/srv/providers/mock/bin/mock ./.tmp/topsailai_scheduler run
+SCHEDULER_DEFAULT_PROVIDER_PATH=/srv/providers/mock/bin/mock ./bin/topsailai_scheduler run
 ```
 
 A relative path is resolved against the working directory, the same rule as

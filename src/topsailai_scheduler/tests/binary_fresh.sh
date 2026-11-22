@@ -15,7 +15,7 @@ set -u
 # PROJECT_ROOT is the repository root, derived from this file's location.
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # BINARY is the scheduler built by the Makefile.
-BINARY="${PROJECT_ROOT}/.tmp/topsailai_scheduler"
+BINARY="${PROJECT_ROOT}/bin/topsailai_scheduler"
 # SOURCE_DIR holds every file the binary is compiled from.
 SOURCE_DIR="${PROJECT_ROOT}/src"
 
