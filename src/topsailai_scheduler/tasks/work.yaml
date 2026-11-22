@@ -1,4 +1,0 @@
-schedule: "0 8 * * *"
-launcher: agent
-workspace: /work
-timeout: 60m

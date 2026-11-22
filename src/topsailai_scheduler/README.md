@@ -193,7 +193,7 @@ talking to a daemon that already validated its own configuration.
 | Path | Role |
 |---|---|
 | `src/` | Go module `topsailai_scheduler` |
-| `tasks/` | Task tree, grouped by free-form nested folders |
+| Task tree | `/work/scheduler/tasks`, outside this repository; set `SCHEDULER_TASKS_ROOT` |
 | `providers/` | Provider projects, each an independent workspace |
 | `tests/integration/` | End-to-end tests driving the real binary |
 | `tests/live/` | Field-level assertions on the request the provider receives |
