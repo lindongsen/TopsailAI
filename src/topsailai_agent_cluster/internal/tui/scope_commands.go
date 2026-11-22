@@ -236,6 +236,21 @@ func availableCommands(kind ScopeKind) []string {
 	return names
 }
 
+// CanonicalCommands returns every canonical command name in matrix order.
+//
+// It exists so a caller outside this package can compare the interactive surface
+// against another surface without keeping a second copy of the command list. The
+// matrix stays the single source of truth: this accessor only reads it, so a
+// command added to the matrix is visible to that comparison immediately and a
+// command removed from it disappears from the comparison as well.
+func CanonicalCommands() []string {
+	names := make([]string, 0, len(commandScopeMatrix))
+	for _, rule := range commandScopeMatrix {
+		names = append(names, rule.Name)
+	}
+	return names
+}
+
 // completableCommands returns the command words completion may offer in a scope:
 // every canonical command plus each multi-character alias the scope permits.
 //
