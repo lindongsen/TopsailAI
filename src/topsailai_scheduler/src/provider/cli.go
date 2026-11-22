@@ -143,6 +143,9 @@ type observationDocument struct {
 	ExitCode int `json:"exit_code"`
 	// Detail is free-form provider text for logs.
 	Detail string `json:"detail"`
+	// Reason is a machine-readable fact about the state, empty when the
+	// provider has nothing extra to say.
+	Reason string `json:"reason"`
 }
 
 // Start begins one run and returns its handle.
@@ -221,6 +224,7 @@ func (c *CLI) Poll(ctx context.Context, handle Handle) (Observation, error) {
 		State:    state,
 		ExitCode: document.ExitCode,
 		Detail:   document.Detail,
+		Reason:   document.Reason,
 	}, nil
 }
 

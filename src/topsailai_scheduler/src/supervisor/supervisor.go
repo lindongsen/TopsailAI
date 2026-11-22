@@ -279,12 +279,16 @@ type reconciliation struct {
 //   - no record: nothing to reconcile, so the round proceeds;
 //   - the run is finished: the record is stale, so it is cleared and the round
 //     proceeds;
+//   - the provider holds no record of the run: the run can never be observed, so
+//     the record is cleared and the round proceeds;
 //   - the run is running or unknown: the round is skipped, because starting a
 //     second copy is the failure this whole mechanism exists to prevent.
 //
 // An unknown state is treated as busy on purpose. A provider that cannot answer
 // is not evidence that the run ended, and the cost of waiting one more tick is a
-// delayed run, while the cost of guessing wrong is duplicated work.
+// delayed run, while the cost of guessing wrong is duplicated work. The single
+// exception is a provider that says it holds no record of the run: waiting cannot
+// change that answer, so treating it as busy would stop the task forever.
 func reconcile(ctx context.Context, implementation provider.Provider, held *lock.Lock, logger *slog.Logger) (reconciliation, error) {
 	record, readErr := lock.ReadRecord(held.Path())
 	if readErr != nil {
@@ -327,6 +331,20 @@ func reconcile(ctx context.Context, implementation provider.Provider, held *lock
 	}
 
 	result := reconciliation{Found: true, State: observation.State}
+
+	// A provider that holds no record of the run cannot ever answer differently,
+	// so the record is cleared instead of blocking every future round.
+	if observation.State == provider.StateUnknown && observation.Reason == provider.ReasonNoRecord {
+		if clearErr := held.ClearRecord(); clearErr != nil {
+			return reconciliation{}, fmt.Errorf("clear unobservable lock record %s: %w", held.Path(), clearErr)
+		}
+		logger.Warn("the provider holds no record of the recorded run, starting a new one",
+			slog.String("run_id", record.RunID),
+			slog.String("detail", observation.Detail),
+		)
+		return result, nil
+	}
+
 	switch observation.State {
 	case provider.StateFinished:
 		// The recorded run is over, so the record is stale. Clearing it lets

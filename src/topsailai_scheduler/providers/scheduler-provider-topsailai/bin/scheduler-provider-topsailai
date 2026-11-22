@@ -100,6 +100,11 @@ STATUS_RUNNING = "running"
 # TERMINAL_STATUSES are the metadata statuses that prove a session ended.
 TERMINAL_STATUSES = ("completed", "error", "interrupted")
 
+# REASON_NO_RECORD marks a poll reply for a run this provider holds no record of.
+# The scheduler clears its lock record on this reason, because a run that cannot
+# be observed at all would otherwise block the task forever.
+REASON_NO_RECORD = "no_record"
+
 
 def fail(message):
     """Report a protocol failure and exit non-zero."""
@@ -512,10 +517,14 @@ def operation_poll(document):
     folder = state_dir()
     record = load_record(folder, run_id)
     if record is None:
+        # The reason is what lets the scheduler tell this apart from a run that
+        # simply has not reported yet. Without it, a lost record would look like
+        # a busy run and the task would never start again.
         write_document({
             "state": "unknown",
             "exit_code": 0,
             "detail": "no record for run %s" % run_id,
+            "reason": REASON_NO_RECORD,
         })
         return
 

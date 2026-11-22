@@ -59,6 +59,18 @@ const (
 	StateUnknown State = "unknown"
 )
 
+// Reasons a provider can attach to an observation.
+//
+// A reason is a machine-readable fact, not a guess. It exists because `unknown`
+// alone conflates two situations that need opposite handling: a run that has not
+// produced any evidence yet must be waited for, while a run the provider has no
+// record of can never be supervised and must not block the task forever.
+const (
+	// ReasonNoRecord means the provider holds no record of the run. The run
+	// cannot be observed at all, so waiting will not change the answer.
+	ReasonNoRecord = "no_record"
+)
+
 // ParseState converts a reported state string into a State.
 //
 // An unrecognised string is an error rather than a default. Treating an unknown
@@ -130,6 +142,10 @@ type Observation struct {
 	ExitCode int
 	// Detail is free-form provider text for logs and diagnostics.
 	Detail string
+	// Reason is a machine-readable fact about why the state is what it is. It
+	// is empty when the provider has nothing extra to say. A reason is never a
+	// guess: it names something the provider actually observed.
+	Reason string
 }
 
 // Provider starts, observes and stops runs of one kind.

@@ -26,6 +26,8 @@ type fakeProvider struct {
 	startErr error
 	// pollErr is returned by Poll when set.
 	pollErr error
+	// reason is attached to every observation Poll returns.
+	reason string
 	// stopCalls counts Stop calls.
 	stopCalls int
 	// started is closed once Start returns.
@@ -59,7 +61,7 @@ func (f *fakeProvider) Poll(_ context.Context, _ provider.Handle) (provider.Obse
 	if index >= len(f.states) {
 		index = len(f.states) - 1
 	}
-	return provider.Observation{State: f.states[index], ExitCode: 0}, nil
+	return provider.Observation{State: f.states[index], ExitCode: 0, Reason: f.reason}, nil
 }
 
 func (f *fakeProvider) Stop(_ context.Context, _ provider.Handle) error {
@@ -516,6 +518,66 @@ func TestRecordWithAnUnknownStateSkipsTheRound(t *testing.T) {
 	}
 	if !outcome.Skipped {
 		t.Fatal("expected an unknown state to be treated as still busy")
+	}
+}
+
+// TestRecordTheProviderHasNoStateForIsCleared verifies that a run the provider
+// holds no record of does not block the task forever.
+//
+// The provider answers `unknown` for two different situations: a run that has not
+// reported yet, which must be waited for, and a run it has no record of, which can
+// never be observed. Only the second one is cleared here.
+func TestRecordTheProviderHasNoStateForIsCleared(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task.lock")
+	writeRecordFile(t, path, lock.Record{RunID: "run-old", Provider: "fake"})
+
+	// The first poll answers reconciliation, the second ends the new run. Without
+	// a terminal state the supervisor would poll the fake forever.
+	implementation := newFakeProvider(provider.StateUnknown, provider.StateFinished)
+	implementation.reason = provider.ReasonNoRecord
+
+	outcome := Run(context.Background(), Options{
+		Provider:     implementation,
+		Request:      provider.Request{TaskID: "demo"},
+		LockPath:     path,
+		PollInterval: time.Millisecond,
+	})
+
+	if outcome.Err != nil {
+		t.Fatalf("unexpected error: %v", outcome.Err)
+	}
+	if outcome.Skipped {
+		t.Fatal("expected an unobservable run to be cleared instead of skipped")
+	}
+	if outcome.Handle.ID != "run-1" {
+		t.Errorf("expected a new run to start, got %q", outcome.Handle.ID)
+	}
+}
+
+// TestRecordWithAnUnknownReasonStillSkipsTheRound verifies that an unknown state
+// carrying some other reason keeps the round skipped.
+//
+// The clearing rule must key on the specific reason, not on the state, or a run
+// that is merely slow would be duplicated.
+func TestRecordWithAnUnknownReasonStillSkipsTheRound(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task.lock")
+	writeRecordFile(t, path, lock.Record{RunID: "run-old", Provider: "fake"})
+
+	implementation := newFakeProvider(provider.StateUnknown)
+	implementation.reason = "starting"
+
+	outcome := Run(context.Background(), Options{
+		Provider:     implementation,
+		Request:      provider.Request{TaskID: "demo"},
+		LockPath:     path,
+		PollInterval: time.Millisecond,
+	})
+
+	if outcome.Err != nil {
+		t.Fatalf("unexpected error: %v", outcome.Err)
+	}
+	if !outcome.Skipped {
+		t.Fatal("expected an unknown state with another reason to stay busy")
 	}
 }
 

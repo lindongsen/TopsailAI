@@ -369,6 +369,17 @@ class TopsailAIProviderTest(unittest.TestCase):
         observation = self.call("poll", {"protocol_version": 1, "run_id": receipt["run_id"]})
         self.assertEqual(observation["state"], "unknown")
 
+    def test_poll_names_the_missing_record_as_the_reason(self):
+        """A run with no record must say so, so the scheduler can stop waiting.
+
+        `unknown` alone is ambiguous: a run that has not reported yet must be
+        waited for, while a run this provider has no record of can never be
+        observed. The reason is what lets the scheduler tell them apart.
+        """
+        observation = self.call("poll", {"protocol_version": 1, "run_id": "run-absent"})
+        self.assertEqual(observation["state"], "unknown")
+        self.assertEqual(observation["reason"], "no_record")
+
     def test_poll_reports_unknown_for_an_unrecognised_status(self):
         """An unrecognised status with no live pid must not be guessed as finished."""
         receipt = self.start()
