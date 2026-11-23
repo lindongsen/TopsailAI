@@ -14,6 +14,7 @@ Run with:
     python3 tests/test_topsailai.py
 """
 
+import datetime
 import json
 import os
 import shutil
@@ -475,6 +476,56 @@ class TopsailAIProviderTest(unittest.TestCase):
                 "driver": "topsailai_agent_chat",
             }, handle)
         return path
+
+    def read_record(self, run_id):
+        """Return the state record the provider wrote for one run."""
+        with open(os.path.join(self.state, "%s.json" % run_id), "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_start_records_a_readable_start_time(self):
+        """The start time must be readable without converting an epoch number.
+
+        The record is what an operator opens when a run looks wrong, so a bare
+        epoch number forces a conversion before the file says anything.
+        """
+        receipt = self.start()
+
+        record = self.read_record(receipt["run_id"])
+        started_at = record["started_at"]
+        self.assertIsInstance(started_at, str, "expected a readable timestamp, got %r" % (started_at,))
+        parsed = datetime.datetime.fromisoformat(started_at)
+        self.assertIsNotNone(parsed.tzinfo, "expected the offset to be recorded in %r" % (started_at,))
+        self.assertLess(abs(parsed.timestamp() - time.time()), 300, "expected the recorded time to be now")
+
+    def test_start_ages_records_that_carry_the_old_epoch_format(self):
+        """A record written before the readable format must still age out.
+
+        Records already on disk carry an epoch number. Refusing that shape would
+        make them unreadable, and an unreadable record is deliberately kept, so
+        the folder would grow without bound again.
+        """
+        stale = self.write_record("legacy-stale", time.time() - 8 * 86400)
+
+        self.start()
+
+        self.assertFalse(os.path.exists(stale), "expected the legacy record to be removed")
+
+    def test_start_ages_records_that_carry_the_readable_format(self):
+        """A readable timestamp must age exactly like an epoch number."""
+        old = (datetime.datetime.now().astimezone() - datetime.timedelta(days=8)).isoformat(timespec="seconds")
+        stale = self.write_record("readable-stale", old)
+
+        self.start()
+
+        self.assertFalse(os.path.exists(stale), "expected the readable record to be removed")
+
+    def test_start_keeps_a_record_with_an_unparseable_start_time(self):
+        """A timestamp that cannot be read must keep the record, not delete it."""
+        path = self.write_record("unparseable", "not-a-time")
+
+        self.start()
+
+        self.assertTrue(os.path.exists(path), "expected the record to be kept")
 
     def test_start_removes_records_older_than_the_retention(self):
         """A record past the retention window must be deleted on the next start.

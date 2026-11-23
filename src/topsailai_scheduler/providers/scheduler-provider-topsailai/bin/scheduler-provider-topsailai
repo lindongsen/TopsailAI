@@ -27,6 +27,7 @@ Two upstream facts shape this implementation:
     to interactive, so this provider sets it to 0 explicitly.
 """
 
+import datetime
 import glob
 import json
 import os
@@ -187,6 +188,49 @@ def save_record(folder, run_id, record):
     os.replace(temporary, path)
 
 
+def timestamp_now():
+    """Return the current time as an ISO 8601 string with the local offset.
+
+    A run record is read by a human far more often than by a program, so the
+    start time is stored in a form that needs no conversion. The offset is kept
+    so the value stays unambiguous when a record is copied to another machine.
+    """
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def parse_timestamp(value):
+    """Return one record's start time as an epoch number, or None.
+
+    Records written before the readable format carry a bare epoch number, and
+    both shapes must age the same way: a record that cannot be aged is kept
+    forever, which is the unbounded growth the retention window exists to stop.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    # `fromisoformat` accepts a trailing `Z` only from Python 3.11, so the
+    # explicit offset form is normalised here instead of relying on the version.
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.timestamp()
+
+
 def retention_days():
     """Return how many days a state record is kept.
 
@@ -221,7 +265,7 @@ def prune_records(folder, keep_run_id):
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 record = json.load(handle)
-            started_at = float(record.get("started_at") or 0)
+            started_at = parse_timestamp(record.get("started_at"))
         except (OSError, ValueError, TypeError):
             # A record that cannot be read cannot be aged, so it is left alone.
             # Deleting it would discard the only evidence of what went wrong.
@@ -353,7 +397,7 @@ def operation_start(document):
         "session_id": session_id,
         "launcher_pid": launcher_pid,
         "launcher_exit": completed.returncode,
-        "started_at": time.time(),
+        "started_at": timestamp_now(),
         "task_id": document.get("task_id") or "",
         "driver": driver(),
     })
