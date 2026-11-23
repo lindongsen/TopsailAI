@@ -229,10 +229,12 @@ def _get_control_action_names() -> List[str]:
     """Return the registered control action names.
 
     Lazily imports the control actions so the completer stays lightweight
-    during normal TAB completion of unrelated commands.
+    during normal TAB completion of unrelated commands. The lookup lives in
+    the package because a compiled build ships ``topsailai_send_control`` as
+    a standalone executable, which cannot be imported.
     """
     try:
-        from topsailai_send_control import get_control_actions
+        from cli_topsailai.runtime_control import get_control_actions
 
         return get_control_actions()
     except Exception:

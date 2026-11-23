@@ -257,56 +257,77 @@ class TestDeleteExecution:
 
 
 class TestInfoDispatch:
-    """One identifier uses the single-session script; many use the batch one."""
+    """One identifier uses the single-session script; many use the batch one.
+
+    The renderer runs as a child command, because a compiled build ships each
+    top-level script as a standalone executable that cannot be imported. The
+    seam under test is therefore ``_run_script``, not the script module.
+    """
 
     def test_single_id_uses_session_info(self):
-        with patch("topsailai_session_info.main", return_value=0) as single, \
-             patch("topsailai_sessions_info.main", return_value=0) as batch:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             assert cli.run_session_cli(["info", "abc"]) == 0
-        single.assert_called_once_with(["abc"])
-        batch.assert_not_called()
+        run.assert_called_once_with(cli._SESSION_INFO, ["abc"])
 
     def test_many_ids_use_sessions_info(self):
-        with patch("topsailai_session_info.main", return_value=0) as single, \
-             patch("topsailai_sessions_info.main", return_value=0) as batch:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             assert cli.run_session_cli(["info", "abc", "def"]) == 0
-        batch.assert_called_once_with(["abc", "def"])
-        single.assert_not_called()
+        run.assert_called_once_with(cli._SESSIONS_INFO, ["abc", "def"])
 
     def test_shared_options_are_forwarded(self):
-        with patch("topsailai_session_info.main", return_value=0) as single:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             cli.run_session_cli(
                 ["info", "abc", "--json", "--no-color", "--db-conn", "sqlite:///x"]
             )
-        single.assert_called_once_with(
-            ["abc", "--json", "--no-color", "--db-conn", "sqlite:///x"]
+        run.assert_called_once_with(
+            cli._SESSION_INFO,
+            ["abc", "--json", "--no-color", "--db-conn", "sqlite:///x"],
         )
 
     def test_include_runtime_is_forwarded_to_the_single_session_script(self):
         """A flag accepted by the subcommand must reach the child it dispatches."""
-        with patch("topsailai_session_info.main", return_value=0) as single:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             assert cli.run_session_cli(["info", "abc", "--include-runtime"]) == 0
-        single.assert_called_once_with(["abc", "--include-runtime"])
+        run.assert_called_once_with(
+            cli._SESSION_INFO, ["abc", "--include-runtime"]
+        )
 
     def test_include_runtime_is_forwarded_to_the_batch_script(self):
         """Many identifiers route to the batch script, which must accept it too."""
-        with patch("topsailai_sessions_info.main", return_value=0) as batch:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             assert cli.run_session_cli(
                 ["info", "abc", "def", "--include-runtime"]
             ) == 0
-        batch.assert_called_once_with(["abc", "def", "--include-runtime"])
+        run.assert_called_once_with(
+            cli._SESSIONS_INFO, ["abc", "def", "--include-runtime"]
+        )
 
     def test_include_runtime_is_absent_when_not_requested(self):
         """The flag must not be invented for a plain invocation."""
-        with patch("topsailai_session_info.main", return_value=0) as single:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             cli.run_session_cli(["info", "abc"])
-        single.assert_called_once_with(["abc"])
+        run.assert_called_once_with(cli._SESSION_INFO, ["abc"])
 
     def test_include_runtime_combines_with_json(self):
         """Both spellings may be given; each is forwarded once."""
-        with patch("topsailai_session_info.main", return_value=0) as single:
+        with patch.object(cli, "_run_script", return_value=0) as run:
             cli.run_session_cli(["info", "abc", "--json", "--include-runtime"])
-        single.assert_called_once_with(["abc", "--json", "--include-runtime"])
+        run.assert_called_once_with(
+            cli._SESSION_INFO, ["abc", "--json", "--include-runtime"]
+        )
+
+    def test_child_exit_status_is_returned(self):
+        """The child's status is the subcommand's status, not a fixed success."""
+        with patch.object(cli, "_run_script", return_value=3) as run:
+            assert cli.run_session_cli(["info", "abc"]) == 3
+        run.assert_called_once_with(cli._SESSION_INFO, ["abc"])
+
+    def test_missing_child_command_is_reported(self):
+        """A missing renderer must fail loudly instead of reporting success."""
+        with patch.object(cli, "_run_script",
+                          return_value=cli._COMMAND_MISSING) as run:
+            assert cli.run_session_cli(["info", "abc"]) == cli._COMMAND_MISSING
+        run.assert_called_once_with(cli._SESSION_INFO, ["abc"])
 
 
 class TestChildCommandForwarding:

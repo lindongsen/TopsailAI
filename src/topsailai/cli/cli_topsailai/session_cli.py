@@ -21,7 +21,10 @@ from typing import List, Optional, Tuple
 
 from cli_topsailai.runtime_cli import RuntimeUsageError, UniqueValue
 
-# Scripts that expose ``main(argv)`` and can therefore run in-process.
+# Scripts that render a session record and are dispatched as child processes.
+# A compiled build turns each top-level script into a standalone executable, so
+# no script can be imported as a module; every script-to-script call must go
+# through the installed command instead.
 _SESSION_INFO = "topsailai_session_info"
 _SESSIONS_INFO = "topsailai_sessions_info"
 _RETRIEVE_MESSAGES = "topsailai_retrieve_messages"
@@ -111,16 +114,18 @@ def _info_options(args) -> List[str]:
 
 
 def _handle_info(args) -> int:
-    """Show one session's detail, or several sessions' detail in one call."""
+    """Show one session's detail, or several sessions' detail in one call.
+
+    The renderer runs as a child command because a compiled build ships each
+    top-level script as a standalone executable, so importing one script from
+    another fails with ``ModuleNotFoundError``. One identifier uses the
+    single-session renderer; two or more use the batch renderer.
+    """
     session_ids = args.session_ids
     options = _info_options(args)
     if len(session_ids) == 1:
-        import topsailai_session_info as module
-
-        return module.main([session_ids[0], *options])
-    import topsailai_sessions_info as module
-
-    return module.main([*session_ids, *options])
+        return _run_script(_SESSION_INFO, [session_ids[0], *options])
+    return _run_script(_SESSIONS_INFO, [*session_ids, *options])
 
 
 def _handle_list(args) -> int:

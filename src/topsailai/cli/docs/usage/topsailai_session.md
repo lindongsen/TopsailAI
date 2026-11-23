@@ -60,6 +60,11 @@ Options: `--json`, `--include-runtime`, `--no-color`, `--db-conn <string>`, `--h
 `--include-runtime` fetches live runtime data for a running session and selects
 JSON output by itself; see [`topsailai_session_info`](topsailai_session_info.md).
 
+`info` runs its renderer as a child command (`topsailai_session_info` for one
+identifier, `topsailai_sessions_info` for several) and returns that child's exit
+status. A compiled build ships each top-level script as a standalone executable
+that cannot be imported, so the renderer is never called in-process.
+
 ### `list`
 
 ```bash
@@ -274,5 +279,10 @@ equivalent here by design.
 - `history` runs as a child process because the backing script changes its
   working directory while importing and resolves its default database relative
   to that directory.
+- `info` runs as a child process for a different reason: a compiled build ships
+  each top-level script as a standalone executable, so importing one script from
+  another raises `ModuleNotFoundError`. Shared renderers therefore live in the
+  `cli_topsailai` package, and script-to-script calls go through the installed
+  command.
 - `delete` is a filesystem operation on the task directory. It is not a
   security boundary against a hostile task directory or other local users.
