@@ -140,7 +140,7 @@ func TestNonRemovingOperationsKeepTheSessionScope(t *testing.T) {
 		input string
 	}{
 		{name: "btw", input: "cd host-one/endpoint-1/res-1\nbtw {\"text\":\"hi\"}\nexit\n"},
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
+		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt soft\ny\nexit\n"},
 		{name: "send", input: "cd host-one/endpoint-1/res-1\nsend {\"text\":\"hi\"}\nexit\n"},
 	}
 	for _, testCase := range cases {

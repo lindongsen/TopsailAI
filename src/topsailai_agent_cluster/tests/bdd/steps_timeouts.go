@@ -96,7 +96,11 @@ func registerTimeoutSteps(ctx *godog.ScenarioContext) {
 		if err != nil {
 			return err
 		}
-		stdout, stderr, code, runErr := activeScenario.realCluster.RunTUI("--json", "--yes", "--wait-timeout-ms", "5000", "interrupt", "endpoint-1", resourceID, "hard", generation)
+		// The action word is its own subcommand slot, so it precedes the target and
+		// the generation travels in --generation. The previous form put "hard" after
+		// the resource and the generation positionally, which the new grammar reads
+		// as a message with no action word and refuses.
+		stdout, stderr, code, runErr := activeScenario.realCluster.RunTUI("--json", "--yes", "--wait-timeout-ms", "5000", "interrupt", "hard", "endpoint-1", resourceID, "--generation", generation)
 		if runErr != nil || code != 0 {
 			return fmt.Errorf("run TUI action: code=%d err=%v stderr=%s stdout=%s", code, runErr, stderr, stdout)
 		}

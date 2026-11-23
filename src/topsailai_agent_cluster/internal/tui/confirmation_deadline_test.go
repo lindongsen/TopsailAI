@@ -32,7 +32,7 @@ func TestConfirmationReadHasNoCommandDeadline(t *testing.T) {
 		{name: "send", command: "send", block: []string{"hi", "EOF"}, op: protocol.OperationMessageSend},
 		// btw is deliberately absent: it submits directly, so it never reads a
 		// confirmation and cannot exercise the deadline rule under test.
-		{name: "interrupt", command: `interrupt {"action":"soft_interrupt"}`, op: protocol.OperationExecutionInterrupt},
+		{name: "interrupt", command: `interrupt soft`, op: protocol.OperationExecutionInterrupt},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

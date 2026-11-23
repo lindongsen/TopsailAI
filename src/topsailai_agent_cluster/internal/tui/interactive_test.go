@@ -481,7 +481,7 @@ func TestInteractiveHelpIncludesStart(t *testing.T) {
 func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
 	var output, errorsOut strings.Builder
-	input := "cd endpoint-1/session-1\nbtw {\"text\":\"context\"}\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nstop\nn\nexit\n"
+	input := "cd endpoint-1/session-1\nbtw {\"text\":\"context\"}\ninterrupt soft\ny\nstop\nn\nexit\n"
 	if err := RunInteractive(context.Background(), stub, strings.NewReader(input), &output, &errorsOut, InteractiveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +501,7 @@ func TestInteractiveSessionLifecycleAndControlCommands(t *testing.T) {
 
 func TestInteractiveSessionActionsRequireSessionScope(t *testing.T) {
 	stub := &interactiveStub{endpoints: []protocol.Endpoint{{EndpointID: "endpoint-1"}}, reports: map[string]protocol.InventoryReport{"endpoint-1": testInventory()}}
-	_, diagnostics := runScope(t, stub, "btw {}\ninterrupt {}\nexit\n", ColorPolicy{})
+	_, diagnostics := runScope(t, stub, "btw {}\ninterrupt\nexit\n", ColorPolicy{})
 	for _, name := range []string{"btw", "interrupt"} {
 		if !strings.Contains(diagnostics, `command "`+name+`" is unavailable in workspace scope`) {
 			t.Fatalf("missing scope rejection for %s: %q", name, diagnostics)
@@ -581,9 +581,9 @@ func TestInteractiveSessionActionValidation(t *testing.T) {
 	}{
 		{name: "stop arguments", input: "cd endpoint-1/session-1\nstop extra\nexit\n", want: "usage: stop"},
 		{name: "btw empty block", input: "cd endpoint-1/session-1\nbtw\nEOF\nexit\n", want: "payload must not be empty"},
-		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nexit\n", want: "usage: interrupt [soft|hard] [message]"},
+		{name: "interrupt unknown action", input: "cd endpoint-1/session-1\ninterrupt nope\nexit\n", want: "interrupt action must be soft or hard"},
 		{name: "btw json option", input: "cd endpoint-1/session-1\nbtw {} --json\nexit\n", want: "does not support --json"},
-		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard now\nexit\n", want: "hard does not accept a message"},
+		{name: "interrupt unquoted message", input: "cd endpoint-1/session-1\ninterrupt soft stop now\nexit\n", want: "quote the message so it stays one argument"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -633,11 +633,12 @@ func TestInteractivePlainTextActionsNeedNoJSON(t *testing.T) {
 		{name: "send prose ending with json flag", input: "cd endpoint-1/session-1\nsend the flag is --json\nexit\n", op: protocol.OperationMessageSend, payload: `{"text":"the flag is --json"}`},
 		{name: "btw prose ending with json flag", input: "cd endpoint-1/session-1\nbtw remember the flag is --json\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"remember the flag is --json"}`},
 		{name: "btw literal text", input: "cd endpoint-1/session-1\nbtw the deployment notes are in docs/\nexit\n", op: protocol.OperationContextInject, payload: `{"text":"the deployment notes are in docs/"}`},
-		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft stop and summarize now\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
+		{name: "interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt soft \"stop and summarize now\"\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"stop and summarize now"}`},
 		{name: "interrupt hard", input: "cd endpoint-1/session-1\ninterrupt hard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
-		{name: "guided interrupt defaults to hard", input: "cd endpoint-1/session-1\ninterrupt\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+		{name: "interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt hard \"wrap up please\"\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt","message":"wrap up please"}`},
+		{name: "guided interrupt defaults to hard", input: "cd endpoint-1/session-1\ninterrupt\n\n\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
 		{name: "guided interrupt soft with message", input: "cd endpoint-1/session-1\ninterrupt\nsoft\nwrap up please\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"soft_interrupt","message":"wrap up please"}`},
-		{name: "guided interrupt hard", input: "cd endpoint-1/session-1\ninterrupt\nhard\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt"}`},
+		{name: "guided interrupt hard with message", input: "cd endpoint-1/session-1\ninterrupt\nhard\nwrap up please\ny\nexit\n", op: protocol.OperationExecutionInterrupt, payload: `{"action":"hard_interrupt","message":"wrap up please"}`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

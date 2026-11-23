@@ -2164,17 +2164,16 @@ it runs the other way: there the gap was assumed, here the spelling was assumed.
 
 ## A usage string can describe one slot's content, not the positional grammar
 
-Trigger: the `interrupt` usage error prints `usage: interrupt [soft|hard] [message]`, and I reported
+Trigger: the `interrupt` usage error printed `usage: interrupt [soft|hard] [message]`, and I reported
 it to the human as a defect that "teaches a two-slot grammar the parser does not implement". The
-human rejected that reading: the string is clear and correct. It is. All three emission sites
-(`internal/tui/interactive_ops.go:422,438,1137`) describe the **content of the single `text` slot**,
-and the third one is the guided `interrupt.action>` prompt, which asks for an action word and
-nothing else. `help interrupt` describes the same slot identically ("optional action word soft or
-hard, optionally followed by a literal message"), and the positional grammar is stated separately
-and correctly in the Syntax line as `[text] [generation]`. The real defect was elsewhere: an
-unquoted message lands in the positional generation slot, which is an unconstrained `string`
-(`internal/protocol/command.go:47`), so `interrupt ep res soft "stop now"` is accepted as
-well-formed, submits `{"action":"soft_interrupt"}` with no message, and fails with
+human rejected that reading: the string is clear and correct. It was. All three emission sites
+(`internal/tui/interactive_ops.go`) described the **content of the single `text` slot**, and one of
+them was the guided `interrupt.action>` prompt, which asks for an action word and nothing else.
+`help interrupt` described the same slot identically, and the positional grammar was stated
+separately and correctly in the Syntax line as `[text] [generation]`. The real defect was elsewhere:
+an unquoted message landed in the positional generation slot, which is an unconstrained `string`
+(`internal/protocol/command.go:47`), so `interrupt ep res soft "stop now"` was accepted as
+well-formed, submitted `{"action":"soft_interrupt"}` with no message, and failed with
 `target_generation_mismatch`.
 
 Action: before calling a usage string wrong, determine which grammar it is describing. A bracketed
@@ -2183,10 +2182,9 @@ sequence of positionals, and the test is whether the command's Syntax line alrea
 positionals separately. Read the emission sites to see what the string is attached to: a string
 raised from inside a prompt that asks for an action word is describing that answer, not the argv.
 Then locate the real defect by asking which slot a plausible mistake lands in, and check whether the
-codebase already guards that shape somewhere else. Here `--generation` frees the positional slot and
-the same unquoted message is correctly refused with `unexpected arguments ... quote the message
-text` (`src/main/agent-cluster-cli/main.go:1557-1561`), so the guard existed and only the positional
-form lacked it.
+codebase already guards that shape somewhere else. Here `--generation` freed the positional slot and
+the same unquoted message was correctly refused with `unexpected arguments ... quote the message
+text`, so the guard existed and only the positional form lacked it.
 
 Why this prevents recurrence: a usage string is prose, so it invites a confident reading, and the
 reading that makes it look wrong is the one that gets reported. The cost is not a wrong sentence in
@@ -2196,15 +2194,38 @@ to, and whether the Syntax line already covers the positionals, converts "this t
 "this text describes one slot, and the defect is in a different slot". The corollary is that a
 defect claim about wording must name the grammar it is judged against, or it is not verifiable.
 
+## A grammar that needs a guard is a grammar worth changing
+
+Trigger: the fix for the absorbed message above was going to be a guard: reject a text slot that
+starts with an action word when another positional follows. The human rejected the guard and changed
+the grammar instead, giving the action word its own positional slot so the message is a separate
+argument. The guard would have kept a grammar in which the same command had two shapes that could not
+be told apart, and every future reader would have had to learn the exception.
+
+Action: when a defect can be fixed either by adding a guard or by changing the grammar, ask which
+one removes the ambiguity rather than which one is smaller. A guard encodes the ambiguity as a
+special case that every later change must respect; a grammar change removes it from the shape of the
+command. Prefer the grammar change when the command is unreleased and the contract is still being
+decided, and check whether an existing command already models the cleaner shape: here `ctl` and
+`drive` both give the action word its own slot, so `interrupt` was the exception rather than the
+rule. Then check what the guard was protecting against and confirm the new grammar still refuses it:
+an unquoted message must still be a visible error, not a silent truncation.
+
+Why this prevents recurrence: a guard is the locally obvious fix, it passes the test that was written
+for the defect, and it leaves the command's shape untouched, so review sees a small safe change. The
+cost is deferred and cumulative: the ambiguity stays in the grammar, so the next person to touch the
+command must rediscover why the guard exists, and a second surface that parses the same command must
+reproduce the guard or drift. Changing the grammar makes the mistake unrepresentable, which is why it
+needs no test to remember it. The tell is a fix that has to explain itself in a comment: if the
+comment is describing why two shapes are indistinguishable, the grammar is the defect.
+
 ## A JSON payload form that skips the validation its plain form performs
 
-Trigger: `interrupt` accepts a JSON object as an advanced payload form and forwards it unchanged
-(`internal/tui/interactive_ops.go:419-424`), so `{"action":"nuke"}`,
-`{"action":"soft_interrupt","msg":"x"}` and `{}` all pass the local confirmation gate. The plain form
-rejects the same mistakes locally: an unknown action word is a usage error, and `hard` with a message
-is refused before submission. The Provider rejects all three JSON cases before any argv exists, so
-`effect_certainty` is `not_applied` and nothing runs; the cost is a wasted round trip and a
-confirmation prompt for a payload the CLI could have refused.
+Trigger: `interrupt` accepts a JSON object as an advanced payload form, and the first version
+forwarded it unchanged, so `{"action":"nuke"}`, `{"action":"soft_interrupt","msg":"x"}` and `{}` all
+passed the local confirmation gate. The plain form rejected the same mistakes locally. The Provider
+rejected all three before any argv existed, so `effect_certainty` was `not_applied` and nothing ran;
+the cost was a wasted round trip and a confirmation prompt for a payload the CLI could have refused.
 
 Action: when a command accepts both a plain form and a JSON form, compare what each form validates
 before submission. A JSON form that only checks "is an object" is not validation, it is deferral. The
@@ -2212,8 +2233,11 @@ project already contains the stronger pattern: `ctlPayload` rejects a non-object
 `ctlPreflightAction` validates the action name against the advertised capabilities, so reuse that
 reasoning rather than inventing a second convention. Then check the empty-object case specifically,
 because it is where the two forms disagree about one intent: a bare `interrupt` submits
-`{"action":"hard_interrupt"}` as the documented default, while `interrupt ... '{}'` submits `{}` and
-is rejected.
+`{"action":"hard_interrupt"}` as the documented default, while `interrupt ... '{}'` submitted `{}`
+and was rejected. The fix here bound the JSON `action` to the positional action word and injected the
+action word into an empty object, so a conflicting or unknown action is now refused locally while an
+unknown **field** still reaches the Provider. That remaining gap is deliberate: the action is the
+safety-relevant part, and a stricter field check is a separate decision.
 
 Why this prevents recurrence: the plain form is the one a human types, so it is the one that gets
 tested and hardened, while the JSON form is the one a script emits and nobody exercises by hand. Both

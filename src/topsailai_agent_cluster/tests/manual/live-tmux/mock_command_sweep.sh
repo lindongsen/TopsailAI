@@ -218,7 +218,7 @@ SEND_COMMAND_ID="$(sed -n 's/^command_id: //p' "${RUN_DIR}/out/send.txt" | head 
 log "SEND_COMMAND_ID=${SEND_COMMAND_ID}"
 capture status status "${SEND_COMMAND_ID}" --json
 capture btw btw --yes live-tmux-endpoint "${SESSION_ID}" "sweep context" "${GENERATION}"
-capture interrupt interrupt --yes live-tmux-endpoint "${SESSION_ID}" hard "${GENERATION}"
+capture interrupt interrupt --yes hard live-tmux-endpoint "${SESSION_ID}" --generation "${GENERATION}"
 capture drive_start drive start --yes live-tmux-endpoint "${SESSION_ID}" "${GENERATION}"
 capture drive_stop drive stop --yes live-tmux-endpoint "${SESSION_ID}" "${GENERATION}"
 capture drive_status drive status live-tmux-endpoint "${SESSION_ID}"

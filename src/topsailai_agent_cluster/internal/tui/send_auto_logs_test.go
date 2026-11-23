@@ -514,7 +514,7 @@ func TestUnitSendAutoFollowDoesNotTriggerOnOtherActions(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt {\"action\":\"soft_interrupt\"}\ny\nexit\n"},
+		{name: "interrupt", input: "cd host-one/endpoint-1/res-1\ninterrupt soft\ny\nexit\n"},
 		{name: "resume", input: "cd host-one/endpoint-1/res-1\nresume\ny\nexit\n"},
 		{name: "stop", input: "cd host-one/endpoint-1/res-1\nstop\ny\nexit\n"},
 	}

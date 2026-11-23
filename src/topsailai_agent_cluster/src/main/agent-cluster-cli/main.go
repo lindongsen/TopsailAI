@@ -1469,13 +1469,13 @@ func driveOperation(action string) (string, bool) {
 // resolveActionPayload converts one positional payload argument into the
 // standard operation payload. Plain text is accepted for every operation that
 // carries user text, so no caller has to write JSON; a JSON object is still
-// forwarded unchanged as the advanced form.
+// forwarded unchanged as the advanced form. Interrupt is absent because its
+// action word and message are two positional slots, so it is resolved by
+// InterruptPayload directly rather than through this single-value helper.
 func resolveActionPayload(operation, value string) (json.RawMessage, error) {
 	switch operation {
 	case "send", "btw":
 		return tui.MessagePayload(value)
-	case "interrupt":
-		return tui.InterruptPayload(operation, value)
 	case "start":
 		return tui.TaskPayload(value)
 	}
@@ -1498,6 +1498,33 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		return err
 	}
 	args = append(append([]string{}, head...), tail...)
+	// The interrupt action word is a subcommand, so it occupies its own positional
+	// slot immediately after the command word. It is stripped here and remembered,
+	// so every later slot keeps its documented index and the shared target handling
+	// below needs no second grammar. An action word anywhere else is not a
+	// subcommand, which is why an unquoted message after the endpoint is rejected
+	// instead of being read as one.
+	interruptAction := ""
+	if operation == "interrupt" && len(args) >= 2 {
+		if standard, known := tui.InterruptActionWord(args[1]); known {
+			interruptAction = standard
+			stripped := make([]string, 0, len(args)-1)
+			stripped = append(stripped, args[0])
+			args = append(stripped, args[2:]...)
+		}
+	}
+	// A message needs an explicit action word, so a fourth positional without one
+	// is refused instead of being read as a message. Without this check the first
+	// word would be taken as the endpoint and the operator's action word would
+	// silently become a machine name, which is the same class of misplacement the
+	// positional generation slot caused. The refusal names no token, because this
+	// shape is ambiguous: "interrupt nope ep res" has a misspelled action word and
+	// "interrupt ep res stop now" has a message with no action word, and both are
+	// three positionals after the command. Naming either one would blame an
+	// argument that may be correct, so the refusal states the grammar instead.
+	if operation == "interrupt" && interruptAction == "" && len(args) >= 4 {
+		return fmt.Errorf("interrupt needs an action word (soft or hard) before the message; with %d positionals after the command the action word is either misspelled or missing; run help interrupt for valid syntax", len(args)-1)
+	}
 	if operation == "stop" && len(args) < 4 && generationFlag == "" {
 		return fmt.Errorf("usage: stop <endpoint-id> <resource-id> <generation>")
 	}
@@ -1538,6 +1565,24 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		positionalLimit = 4
 		textStart = 0
 	}
+	// interrupt gives the action word and the message their own slots, so the only
+	// positional after the message would be the generation. A generation is an
+	// unconstrained string, so a positional one is indistinguishable from a second
+	// word of an unquoted message: "interrupt soft ep res stop now" would send
+	// "stop" as the message and "now" as the expected generation. The generation is
+	// therefore accepted only through --generation, which frees the slot and makes
+	// an unquoted message a visible error instead of a silent truncation.
+	if operation == "interrupt" {
+		positionalLimit = 4
+		textStart = 3
+		if interruptAction == "" {
+			// Without an action word the form is the bare default, so the endpoint
+			// and resource are the only positionals. A fourth positional would be
+			// read as a message with no stated action, which is exactly the guess
+			// this grammar removes.
+			positionalLimit = 3
+		}
+	}
 	// resume carries no text payload, so its only optional positional is the
 	// generation. Treating the slot as text made the documented example
 	// "resume <endpoint> <resource> <generation>" consume the generation as a
@@ -1557,8 +1602,10 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 	// A generation supplied by the flag frees its positional slot, but only in the
 	// forms that have such a slot. The handle form has none, so decrementing there
 	// would reject the endpoint itself and report the operator's own endpoint as an
-	// unexpected argument.
-	if generationFlag != "" && !handleForm {
+	// unexpected argument. interrupt has none either: its generation is accepted
+	// only through --generation, so the flag does not free a slot and decrementing
+	// would reject the resource the operator did state.
+	if generationFlag != "" && !handleForm && operation != "interrupt" {
 		positionalLimit--
 	}
 	if operation == "start" && task != "" {
@@ -1578,6 +1625,23 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 		if generation == "" && len(args) >= 4 {
 			generation = args[3]
 		}
+	} else if operation == "interrupt" {
+		// The action word is its own subcommand slot and the message is the next
+		// positional, so neither is guessed from the other. A bare interrupt
+		// submits the documented hard default, and a message is forwarded for
+		// either action because the cluster never decides which action may carry
+		// one; that is a provider implementation detail. The generation travels in
+		// --generation only, because a positional one cannot be told apart from a
+		// second word of an unquoted message.
+		message := ""
+		if len(args) >= 4 {
+			message = args[3]
+		}
+		resolved, err := tui.InterruptPayload(operation, interruptAction, message)
+		if err != nil {
+			return err
+		}
+		payload = resolved
 	} else {
 		if len(args) >= 4 {
 			resolved, err := resolveActionPayload(operation, args[3])
@@ -1607,15 +1671,6 @@ func action(ctx context.Context, api tui.CommandAPI, output io.Writer, input io.
 				return err
 			}
 			resolved, err := resolveActionPayload(operation, block.Text)
-			if err != nil {
-				return err
-			}
-			payload = resolved
-		} else if operation == "interrupt" {
-			// A bare interrupt submits the hard default, so the operator does not
-			// have to spell the action word. A message without an explicit action
-			// word is rejected by InterruptPayload instead of being guessed.
-			resolved, err := resolveActionPayload(operation, "")
 			if err != nil {
 				return err
 			}

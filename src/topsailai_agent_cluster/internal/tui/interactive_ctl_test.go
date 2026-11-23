@@ -610,3 +610,53 @@ func TestExecuteInteractiveLineCtlSuppliedParametersSkipThePrompt(t *testing.T) 
 		t.Fatalf("output missing the guided preview: %q", output.String())
 	}
 }
+
+// TestInterruptExamplesParseUnderTheActionWordGrammar proves every documented
+// interrupt example is executable. A help example is the spelling an operator copies,
+// so an example the parser refuses is a defect in the help rather than in the operator.
+// The interactive examples are split by the same tokenizer the REPL uses, because a
+// multi-word message must be quoted there too.
+func TestInterruptExamplesParseUnderTheActionWordGrammar(t *testing.T) {
+	entry, ok := commandHelpCatalog["interrupt"]
+	if !ok {
+		t.Fatal("interrupt is missing from the help catalog")
+	}
+	for _, example := range entry.examples {
+		tokens, err := splitInteractiveArguments(example)
+		if err != nil {
+			t.Fatalf("example %q does not tokenize: %v", example, err)
+		}
+		if len(tokens) == 0 || tokens[0] != "interrupt" {
+			t.Fatalf("example %q does not start with the command word: %v", example, tokens)
+		}
+		if _, _, err := ParseInterruptArguments(tokens[1:]); err != nil {
+			t.Fatalf("interactive example %q is refused by the parser: %v", example, err)
+		}
+	}
+	var standalone bytes.Buffer
+	if err := PrintNonInteractiveCommandHelp(&standalone, "interrupt"); err != nil {
+		t.Fatalf("PrintNonInteractiveCommandHelp: %v", err)
+	}
+	for _, example := range nonInteractiveHelpEntry("interrupt").examples {
+		tokens, err := splitInteractiveArguments(example)
+		if err != nil {
+			t.Fatalf("standalone example %q does not tokenize: %v", example, err)
+		}
+		// The standalone grammar is interrupt [soft|hard] <endpoint> <resource>
+		// [message], so the action word and the message are the first and last
+		// tokens after the command word and the target.
+		if len(tokens) < 3 || tokens[0] != "interrupt" {
+			t.Fatalf("standalone example %q does not name a target: %v", example, tokens)
+		}
+		rest := tokens[1:]
+		if _, known := InterruptActionWord(rest[0]); known {
+			rest = rest[1:]
+		}
+		if len(rest) < 2 {
+			t.Fatalf("standalone example %q does not name an endpoint and a resource: %v", example, tokens)
+		}
+		if len(rest) > 3 {
+			t.Fatalf("standalone example %q has %d positionals after the target, so the message is unquoted: %v", example, len(rest)-2, tokens)
+		}
+	}
+}

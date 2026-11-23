@@ -1072,9 +1072,16 @@ an oversight, and it applies only to the interactive surface.
   --help` renders the same detail as `agent-cluster-cli help send`, and the
   standalone help does not advertise the interactive restriction.
 - `interrupt` also takes literal content, but it is not part of this exception
-  because its first token is an action word, not free text. A message without an
-  explicit `soft` is rejected rather than guessed, so `interrupt please summarize`
-  reports a usage error instead of silently choosing an action.
+  because its action word is a subcommand with its own positional slot, not free
+  text. The grammar is `interrupt [soft|hard] <endpoint> <resource> [message]
+  [generation]`, so a message is a separate slot and never has to be prefixed with
+  an action word. A message without an explicit action word is rejected rather than
+  guessed, so `interrupt ep res "please summarize"` reports a usage error instead of
+  silently choosing an action. Both actions accept a message: the cluster forwards
+  it without deciding which action may carry one, because that is a provider
+  implementation detail. The generation travels in `--generation` only, because a
+  positional generation is an unconstrained string and would be indistinguishable
+  from a second word of an unquoted message.
 
 ## Progress lines
 

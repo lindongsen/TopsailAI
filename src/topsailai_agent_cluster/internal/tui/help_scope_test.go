@@ -410,7 +410,7 @@ func TestPrintNonInteractiveCommandHelp(t *testing.T) {
 	if err := PrintNonInteractiveCommandHelp(&out, "interrupt"); err != nil {
 		t.Fatalf("standalone interrupt help failed: %v", err)
 	}
-	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+	if !strings.Contains(out.String(), "Syntax: agent-cluster-cli [options] interrupt [soft|hard] <endpoint> <resource> [message] [generation]") {
 		t.Fatalf("standalone interrupt help=%q", out.String())
 	}
 	if !containsCommand(nonInteractiveHelpOrder, "start") || containsCommand(nonInteractiveHelpOrder, "inject") {

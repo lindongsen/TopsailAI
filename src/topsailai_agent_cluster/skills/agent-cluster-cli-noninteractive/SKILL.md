@@ -112,7 +112,7 @@ literal data. `exec` keeps its own `--` because the terminator is part of its sy
 |---|---|---|
 | `send` | `send <endpoint> <resource> [text] [generation]` | `--yes` |
 | `btw` | `btw <endpoint> <resource> [text] [generation]` | `--yes` |
-| `interrupt` | `interrupt <endpoint> <resource> [text] [generation]` — `text` is one argument holding an optional action word `soft`/`hard` and, for `soft` only, an optional message | `--yes` |
+| `interrupt` | `interrupt [soft\|hard] <endpoint> <resource> [message] [generation]` — the action word is its own slot; both actions accept a message; the generation travels in `--generation` only | `--yes` |
 | `ctl` (alias `control`) | `ctl <endpoint> <resource> <action> [json] [generation]` | `--yes` |
 | `exec` | `exec <endpoint> <resource> <generation> -- <argv...>` or `exec <endpoint> -- <argv...>` | `--yes` |
 | `start` | `start <endpoint> <resource> [text] [generation] --profile <id> --profile-revision <rev>` | `--yes` |
@@ -167,23 +167,27 @@ reporting an error.
   **generation**, and the confirmation line shows `parameters={"text":"hello"}`. Three or more
   words are rejected with `unexpected arguments "..."; quote the message text so it stays one
   argument`. Always pass one quoted argument, or omit the text and pipe a multi-line block.
-- **`interrupt` takes one text slot, not an action slot plus a message slot.** The whole
-  `soft`/`hard` word and any message must be inside **one** quoted argument:
-  `interrupt ep res "soft stop now"` submits `{"action":"soft_interrupt","message":"stop now"}`.
-  The usage error prints `usage: interrupt [soft|hard] [message]`, which describes the **content of
-  that one text slot** (an action word, then an optional message) — it is not a second positional.
-  The positional grammar is `interrupt <endpoint> <resource> [text] [generation]`. The trap is the
-  generation slot: it is an unconstrained string, so `interrupt ep res soft "stop now"` is accepted
-  as well-formed, `"stop now"` becomes the generation, the payload carries no message, and the
-  command then fails with `target_generation_mismatch` — a cause unrelated to the real mistake.
-  **Prefer `--generation`** for this family: `interrupt ep res "soft stop now" --generation <gen>`
-  frees the positional slot, and an unquoted message is then correctly refused with
-  `unexpected arguments "soft stop now"; quote the message text so it stays one argument`. `hard`
-  accepts no message, and a bare `interrupt ep res` submits the hard default. Also accepted but
-  undocumented: `s`, `h`, `soft_interrupt`, `hard_interrupt`, and a JSON object such as
-  `{"action":"soft_interrupt","message":"..."}`. A JSON object is forwarded without local
-  validation, so a typo or an unknown action is only refused by the Endpoint, as a rejected
-  receipt with `invalid_request` and `effect_certainty: not_applied`.
+- **`interrupt` gives the action word its own slot.** The grammar is
+  `interrupt [soft|hard] <endpoint> <resource> [message] [generation]`. The action word is a
+  subcommand, exactly like `drive <start|stop|status>`, so the message is a **separate** positional
+  and never has to be prefixed with an action word:
+  `interrupt ep res soft "stop now"` submits `{"action":"soft_interrupt","message":"stop now"}`.
+  Both actions accept a message; the cluster forwards it without deciding which action may carry
+  one, because that is a provider implementation detail. A bare `interrupt ep res` submits the hard
+  default. A message with no action word is refused rather than guessed, so
+  `interrupt ep res "stop now"` reports `interrupt needs an action word (soft or hard) before the
+  message` instead of silently choosing an action.
+- **`interrupt` takes the generation only through `--generation`.** There is no positional
+  generation slot, because a positional generation is an unconstrained string and would be
+  indistinguishable from a second word of an unquoted message: `interrupt ep res soft stop now`
+  would send `stop` as the message and `now` as the expected generation. Use
+  `interrupt ep res soft "stop now" --generation <gen>`. An unquoted message is then refused with
+  `unexpected arguments "stop now"; quote the message text so it stays one argument`.
+- **`interrupt` also accepts undocumented spellings and a JSON object.** `s`, `h`,
+  `soft_interrupt` and `hard_interrupt` are accepted action words. A JSON object such as
+  `{"action":"soft_interrupt","message":"..."}` is also accepted, but it is forwarded without local
+  validation, so a typo or an unknown action is only refused by the Endpoint, as a rejected receipt
+  with `invalid_request` and `effect_certainty: not_applied`. Prefer the plain form.
 - **`exec` requires `--`.** Without it the command reports
   `usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>`. The argv array comes from
   the shell's own word splitting and is never re-tokenized. The endpoint-only form

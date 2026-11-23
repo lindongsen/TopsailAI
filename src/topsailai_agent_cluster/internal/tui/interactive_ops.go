@@ -411,43 +411,89 @@ var interruptActions = map[string]string{
 	"h":              "hard_interrupt",
 }
 
-// InterruptPayload converts the plain interrupt grammar into the standard payload.
-// Accepted forms are "soft [message]" and "hard"; a JSON object is forwarded
-// unchanged as the advanced form.
-func InterruptPayload(name, text string) (json.RawMessage, error) {
-	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "{") {
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(text), &payload); err != nil || payload == nil {
-			return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
-		}
-		return json.RawMessage(text), nil
-	}
-	args, err := splitInteractiveArguments(text)
-	if err != nil {
-		return nil, err
+// ParseInterruptArguments splits the interrupt tail into its action word and its
+// optional message. The grammar gives each its own positional slot, so the action
+// word is never guessed from free text and a message never has to be prefixed with
+// one. Both surfaces call this, so the interactive and standalone grammars cannot
+// drift apart. An unknown first word is refused rather than treated as a message,
+// because guessing an action from prose would hide the choice the operator made.
+func ParseInterruptArguments(args []string) (action, message string, err error) {
+	if len(args) > 2 {
+		return "", "", fmt.Errorf("interrupt takes an action word and one optional message; quote the message so it stays one argument")
 	}
 	if len(args) == 0 {
-		// The hard action is the default, so a bare interrupt needs no action
-		// word. A message without an explicit action word is still rejected
-		// below, because guessing soft from free text would hide the choice.
-		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
+		return "", "", nil
 	}
-	action, known := interruptActions[strings.ToLower(args[0])]
+	action = strings.ToLower(strings.TrimSpace(args[0]))
+	if _, known := interruptActions[action]; !known {
+		return "", "", fmt.Errorf("interrupt action must be soft or hard, got %q; a message needs an explicit action word", args[0])
+	}
+	if len(args) == 2 {
+		message = args[1]
+	}
+	return action, message, nil
+}
+
+// InterruptActionWord reports whether word is an accepted interrupt action spelling
+// and returns the standard action name. The standalone command uses it to decide
+// whether the action word occupies its own positional slot, so the grammar is
+// resolved from the same table that validates it rather than from a second list.
+func InterruptActionWord(word string) (string, bool) {
+	standard, known := interruptActions[strings.ToLower(strings.TrimSpace(word))]
+	return standard, known
+}
+
+// InterruptPayload converts the plain interrupt grammar into the standard payload.
+// The action word and the message are separate arguments, because the command
+// grammar gives each its own positional slot. Both actions accept a message: the
+// cluster forwards whatever the operator wrote and never decides which action may
+// carry one, because that is a provider implementation detail. A JSON object in
+// the message slot is the advanced form; its action must agree with the action
+// word, so the two spellings can never disagree about the same intent.
+func InterruptPayload(name, action, message string) (json.RawMessage, error) {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "" {
+		// The hard action is the default, so a bare interrupt needs no action
+		// word. A message without an explicit action word is still rejected,
+		// because guessing an action from free text would hide the choice.
+		action = "hard"
+	}
+	standard, known := interruptActions[action]
 	if !known {
 		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
 	}
-	message := strings.Join(args[1:], " ")
-	if action == "hard_interrupt" {
-		if message != "" {
-			return nil, fmt.Errorf("%s hard does not accept a message", name)
-		}
-		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
+	message = strings.TrimSpace(message)
+	if strings.HasPrefix(message, "{") {
+		return advancedInterruptPayload(name, standard, message)
 	}
 	if message == "" {
-		return json.RawMessage(`{"action":"soft_interrupt"}`), nil
+		return json.RawMessage(fmt.Sprintf(`{"action":%q}`, standard)), nil
 	}
-	encoded, err := json.Marshal(map[string]string{"action": "soft_interrupt", "message": message})
+	encoded, err := json.Marshal(map[string]string{"action": standard, "message": message})
+	if err != nil {
+		return nil, fmt.Errorf("encode payload: %w", err)
+	}
+	return json.RawMessage(encoded), nil
+}
+
+// advancedInterruptPayload accepts a JSON object in the message slot and binds it
+// to the action word the operator already stated. An object that names a different
+// action is refused instead of silently overriding the positional choice, because
+// two spellings of one intent must never disagree.
+func advancedInterruptPayload(name, standard, document string) (json.RawMessage, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(document), &payload); err != nil || payload == nil {
+		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
+	}
+	if raw, present := payload["action"]; present {
+		declared, isText := raw.(string)
+		mapped, known := interruptActions[strings.ToLower(strings.TrimSpace(declared))]
+		if !isText || !known || mapped != standard {
+			return nil, fmt.Errorf("%s: JSON action %v conflicts with the %q action word; state the action once", name, raw, standard)
+		}
+	}
+	payload["action"] = standard
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode payload: %w", err)
 	}
@@ -1078,7 +1124,19 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	} else if payloadText == "" {
 		payload, err = promptInterruptPayload(parent, name, lines, out, trustedOut, options)
 	} else {
-		payload, err = InterruptPayload(name, payloadText)
+		// The action word and the message are separate positional slots, so the
+		// REPL splits the tail exactly as the standalone command does. A message
+		// therefore never has to be prefixed with an action word, and an unknown
+		// first word is refused instead of being read as prose.
+		args, splitErr := splitInteractiveArguments(payloadText)
+		if splitErr != nil {
+			return splitErr
+		}
+		action, message, parseErr := ParseInterruptArguments(args)
+		if parseErr != nil {
+			return parseErr
+		}
+		payload, err = InterruptPayload(name, action, message)
 	}
 	if err != nil {
 		return err
@@ -1115,10 +1173,12 @@ func interactiveSessionPayload(parent context.Context, api InteractiveAPI, state
 	return interactiveConfirmedAction(parent, api, state, op, name, confirmationTargetFor(*session), session.ProviderGeneration, payload, lines, out, trustedOut, options, nil, postSubmit)
 }
 
-// promptInterruptPayload guides a bare interrupt through the action choice and, for a soft
-// interrupt, one optional message. The prompt is kept so the operator always sees both
-// actions, and an empty answer selects the documented default, which is hard. The operator
-// therefore never has to compose a JSON object, and never selects an action unknowingly.
+// promptInterruptPayload guides a bare interrupt through the action choice and one
+// optional message. The prompt is kept so the operator always sees both actions, and
+// an empty answer selects the documented default, which is hard. The message prompt
+// is asked for either action, because the cluster forwards a message for both and
+// never decides which action may carry one. The operator therefore never has to
+// compose a JSON object, and never selects an action unknowingly.
 func promptInterruptPayload(parent context.Context, name string, lines <-chan lineReadResult, out, trustedOut io.Writer, options InteractiveOptions) (json.RawMessage, error) {
 	question := name + " action? soft or hard, empty selects hard " + confirmationHint + " "
 	if err := writeConfirmationQuestion(trustedOut, question, options.Color); err != nil {
@@ -1136,10 +1196,7 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 	if _, known := interruptActions[action]; !known {
 		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
 	}
-	if interruptActions[action] == "hard_interrupt" {
-		return json.RawMessage(`{"action":"hard_interrupt"}`), nil
-	}
-	if _, err := fmt.Fprintln(out, "Optional message for the soft interrupt; empty sends none."); err != nil {
+	if _, err := fmt.Fprintln(out, "Optional message for the interrupt; empty sends none."); err != nil {
 		return nil, err
 	}
 	markRecoverablePromptFailure(parent)
@@ -1147,7 +1204,7 @@ func promptInterruptPayload(parent context.Context, name string, lines <-chan li
 	if err != nil {
 		return nil, err
 	}
-	return InterruptPayload(name, "soft "+strings.TrimSpace(message))
+	return InterruptPayload(name, action, message)
 }
 
 // interactiveConfirmedAction keeps mutating confirmation and shared intent submission in one path.

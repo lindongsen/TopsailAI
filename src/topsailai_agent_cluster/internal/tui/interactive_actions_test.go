@@ -41,8 +41,10 @@ func TestInteractiveSessionExactIntents(t *testing.T) {
 				line += " " + payload
 			}
 			if op == protocol.OperationExecutionInterrupt {
+				// The action word is its own positional slot, so the message is
+				// quoted into the next slot instead of being prefixed with one.
 				payload = `{"action":"soft_interrupt","message":"literal --json is data"}`
-				line += " " + payload
+				line += ` soft "literal --json is data"`
 			}
 			var out, diagnostics strings.Builder
 			// btw submits directly, so only the operations that still confirm

@@ -396,7 +396,7 @@ func TestNonInteractiveHelpMatchesDispatchAndFlagPlacement(t *testing.T) {
 	if err := runWithIO([]string{"help", "interrupt"}, strings.NewReader(""), &output, &diagnostics, false, nil); err != nil {
 		t.Fatalf("non-interactive help rejected the dispatched interrupt command: %v", err)
 	}
-	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] interrupt <endpoint> <resource> [text] [generation]") {
+	if !strings.Contains(output.String(), "Syntax: agent-cluster-cli [options] interrupt [soft|hard] <endpoint> <resource> [message] [generation]") {
 		t.Fatalf("standalone interrupt help=%q", output.String())
 	}
 	output.Reset()
@@ -429,8 +429,6 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 	}{
 		{"send", "hello world", `{"text":"hello world"}`},
 		{"btw", "the notes are in docs/", `{"text":"the notes are in docs/"}`},
-		{"interrupt", "soft stop now", `{"action":"soft_interrupt","message":"stop now"}`},
-		{"interrupt", "hard", `{"action":"hard_interrupt"}`},
 		{"start", "summarize the open issues", `{"task":"summarize the open issues"}`},
 	} {
 		got, err := resolveActionPayload(tc.operation, tc.value)
@@ -441,11 +439,63 @@ func TestStandalonePlainTextPayloadsNeedNoJSON(t *testing.T) {
 			t.Fatalf("%s %q payload=%s want=%s", tc.operation, tc.value, got, tc.want)
 		}
 	}
-	if _, err := resolveActionPayload("interrupt", "hard with a message"); err == nil {
-		t.Fatal("hard interrupt accepted a message")
-	}
 	if _, err := resolveActionPayload("start", "   "); err == nil {
 		t.Fatal("blank task accepted")
+	}
+}
+
+// TestStandaloneInterruptActionWordIsItsOwnSlot proves the interrupt action word is a
+// subcommand with its own positional slot, so the message is a separate slot and the
+// old single-text form is refused instead of silently absorbing the message. Each case
+// drives the real entry point, because the slot layout lives in action rather than in
+// the payload helper.
+func TestStandaloneInterruptActionWordIsItsOwnSlot(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr string
+		// wantNot is a substring the refusal must not contain. It exists because a
+		// refusal that names the wrong argument still passes a positive assertion:
+		// blaming the endpoint for a message with no action word reads as a valid
+		// refusal while sending the operator to the argument that was correct.
+		wantNot string
+	}{
+		{name: "bare interrupt keeps the hard default", args: []string{"interrupt", "ep", "session"}, want: `{"action":"hard_interrupt"}`},
+		{name: "action word then message", args: []string{"interrupt", "soft", "ep", "session", "stop now"}, want: `{"action":"soft_interrupt","message":"stop now"}`},
+		{name: "hard accepts a message", args: []string{"interrupt", "hard", "ep", "session", "wrap up"}, want: `{"action":"hard_interrupt","message":"wrap up"}`},
+		{name: "action word without a message", args: []string{"interrupt", "soft", "ep", "session"}, want: `{"action":"soft_interrupt"}`},
+		{name: "unquoted message is refused", args: []string{"interrupt", "soft", "ep", "session", "stop", "now"}, wantErr: "quote the message text"},
+		{name: "message without an action word is refused", args: []string{"interrupt", "ep", "session", "stop now"}, wantErr: "needs an action word (soft or hard) before the message", wantNot: `"ep"`},
+		{name: "misspelled action word is refused the same way", args: []string{"interrupt", "nope", "ep", "session"}, wantErr: "needs an action word (soft or hard) before the message", wantNot: `"nope"`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := &allCapabilityStub{}
+			var out strings.Builder
+			err := action(context.Background(), stub, &out, &unreadableInput{}, io.Discard, tui.ColorPolicy{}, testCase.args, true, false, 100, "", "", "", "", "", "")
+			if testCase.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("error=%v want %q", err, testCase.wantErr)
+				}
+				if testCase.wantNot != "" && strings.Contains(err.Error(), testCase.wantNot) {
+					t.Fatalf("refusal names %q, which is the argument that was correct: %v", testCase.wantNot, err)
+				}
+				if len(stub.intents) != 0 {
+					t.Fatalf("refused interrupt admitted %d intents", len(stub.intents))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("interrupt: %v", err)
+			}
+			if len(stub.intents) != 1 {
+				t.Fatalf("intent count=%d", len(stub.intents))
+			}
+			if got := string(stub.intents[0].Payload); got != testCase.want {
+				t.Fatalf("payload=%s want=%s", got, testCase.want)
+			}
+		})
 	}
 }
 
