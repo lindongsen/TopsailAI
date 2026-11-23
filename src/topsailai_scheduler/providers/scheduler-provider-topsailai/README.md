@@ -221,6 +221,28 @@ provider starts is still honoured.
 The scheduler does not manage the state folder. Clearing it is safe: agents
 already launched keep running, and `poll` then reports `unknown`.
 
+### The run record
+
+One JSON file per run, named `{run_id}.json`:
+
+```json
+{
+  "run_id": "f1e0a19006654afd978b6bfab89c0198",
+  "session_id": "wa-b8aa99b1a07a",
+  "launcher_pid": 1561231,
+  "launcher_exit": 0,
+  "started_at": "2026-11-23T08:00:01+08:00",
+  "task_id": "work",
+  "driver": "topsailai_agent_chat"
+}
+```
+
+`started_at` is an ISO 8601 timestamp with the local UTC offset, so the file
+states when the run began without a conversion. It matches the shape the
+scheduler writes into its own lock record. Records written by an earlier build
+carry a bare epoch number instead; the retention sweep reads both shapes, so an
+old record still ages out rather than being kept forever.
+
 ## Precedence of environment variables
 
 The task's own `env` is applied first, then this provider's requirements. A task
