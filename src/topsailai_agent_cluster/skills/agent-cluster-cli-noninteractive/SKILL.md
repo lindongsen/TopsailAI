@@ -170,10 +170,15 @@ reporting an error.
 - **`interrupt` takes one text slot, not an action slot plus a message slot.** The whole
   `soft`/`hard` word and any message must be inside **one** quoted argument:
   `interrupt ep res "soft stop now"` submits `{"action":"soft_interrupt","message":"stop now"}`.
-  The usage error prints `usage: interrupt [soft|hard] [message]`, which reads as two slots and
-  is wrong; following it literally with `interrupt ep res soft "stop now"` puts the message in
-  the generation slot, submits `{"action":"soft_interrupt"}` with no message, and then fails with
-  `target_generation_mismatch` — a cause that has nothing to do with the real mistake. `hard`
+  The usage error prints `usage: interrupt [soft|hard] [message]`, which describes the **content of
+  that one text slot** (an action word, then an optional message) — it is not a second positional.
+  The positional grammar is `interrupt <endpoint> <resource> [text] [generation]`. The trap is the
+  generation slot: it is an unconstrained string, so `interrupt ep res soft "stop now"` is accepted
+  as well-formed, `"stop now"` becomes the generation, the payload carries no message, and the
+  command then fails with `target_generation_mismatch` — a cause unrelated to the real mistake.
+  **Prefer `--generation`** for this family: `interrupt ep res "soft stop now" --generation <gen>`
+  frees the positional slot, and an unquoted message is then correctly refused with
+  `unexpected arguments "soft stop now"; quote the message text so it stays one argument`. `hard`
   accepts no message, and a bare `interrupt ep res` submits the hard default. Also accepted but
   undocumented: `s`, `h`, `soft_interrupt`, `hard_interrupt`, and a JSON object such as
   `{"action":"soft_interrupt","message":"..."}`. A JSON object is forwarded without local

@@ -2162,31 +2162,39 @@ usage error, and the document that was supposed to prevent exactly that is the t
 This is the same class as recording a capability gap without checking the provider's real surface, but
 it runs the other way: there the gap was assumed, here the spelling was assumed.
 
-## A usage string that describes a different grammar than the parser implements
+## A usage string can describe one slot's content, not the positional grammar
 
-Trigger: the `interrupt` usage error prints `usage: interrupt [soft|hard] [message]`, which reads as
-two positional slots. The parser implements one: `interrupt <endpoint> <resource> <text>
-<generation>`, where `<text>` is a single argument that must itself contain the action word and, for
-`soft`, the message. Following the usage text literally with
-`interrupt ep res soft "stop now"` puts the message in the generation slot, submits
-`{"action":"soft_interrupt"}` with no message, and fails with `target_generation_mismatch`. The
-operator's real mistake was an unquoted message; the reported cause is a generation mismatch, which
-sends the investigation to target identity and inventory.
+Trigger: the `interrupt` usage error prints `usage: interrupt [soft|hard] [message]`, and I reported
+it to the human as a defect that "teaches a two-slot grammar the parser does not implement". The
+human rejected that reading: the string is clear and correct. It is. All three emission sites
+(`internal/tui/interactive_ops.go:422,438,1137`) describe the **content of the single `text` slot**,
+and the third one is the guided `interrupt.action>` prompt, which asks for an action word and
+nothing else. `help interrupt` describes the same slot identically ("optional action word soft or
+hard, optionally followed by a literal message"), and the positional grammar is stated separately
+and correctly in the Syntax line as `[text] [generation]`. The real defect was elsewhere: an
+unquoted message lands in the positional generation slot, which is an unconstrained `string`
+(`internal/protocol/command.go:47`), so `interrupt ep res soft "stop now"` is accepted as
+well-formed, submits `{"action":"soft_interrupt"}` with no message, and fails with
+`target_generation_mismatch`.
 
-Action: when a usage or error string names positional slots, verify it against the code that assigns
-them by index, not against the help body or the examples. Here `action` reads `args[3]` as text and
-`args[4]` as generation (`src/main/agent-cluster-cli/main.go:1581-1648`), and the text-bearing family
-sets `positionalLimit = 5`, which is exactly the arity of the misleading invocation, so
-`rejectExtraPositionals` accepts it as well-formed. Then check whether the string is pinned by a test:
-two tests asserted this exact usage text (`internal/tui/interactive_test.go:584,668`), so the defect
-was certified rather than detected. Replace those assertions instead of adding new ones beside them.
+Action: before calling a usage string wrong, determine which grammar it is describing. A bracketed
+alternation such as `[soft|hard] [message]` may be the content grammar of one argument, not a
+sequence of positionals, and the test is whether the command's Syntax line already accounts for the
+positionals separately. Read the emission sites to see what the string is attached to: a string
+raised from inside a prompt that asks for an action word is describing that answer, not the argv.
+Then locate the real defect by asking which slot a plausible mistake lands in, and check whether the
+codebase already guards that shape somewhere else. Here `--generation` frees the positional slot and
+the same unquoted message is correctly refused with `unexpected arguments ... quote the message
+text` (`src/main/agent-cluster-cli/main.go:1557-1561`), so the guard existed and only the positional
+form lacked it.
 
-Why this prevents recurrence: a usage string is prose, so nothing type-checks it against the parser,
-and it is the one string an operator copies when they are already confused. The failure is silent in
-the direction that matters: the command is accepted, the payload is well-formed, and only the message
-is missing, which no error mentions. The wrong error code is worse than no error, because it names a
-cause the operator can act on and that cause is not the real one. Reading the index assignment is what
-turns "the usage text is wrong" into "the usage text teaches an invocation that cannot work".
+Why this prevents recurrence: a usage string is prose, so it invites a confident reading, and the
+reading that makes it look wrong is the one that gets reported. The cost is not a wrong sentence in
+a document, it is a wrong defect report: the human has to spend a turn rejecting it, and the real
+defect stays unfixed while the discussion is about the string. Checking what the string is attached
+to, and whether the Syntax line already covers the positionals, converts "this text is wrong" into
+"this text describes one slot, and the defect is in a different slot". The corollary is that a
+defect claim about wording must name the grammar it is judged against, or it is not verifiable.
 
 ## A JSON payload form that skips the validation its plain form performs
 
