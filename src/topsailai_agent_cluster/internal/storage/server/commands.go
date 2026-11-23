@@ -28,8 +28,13 @@ type CommandRecord struct {
 	ErrorCode                 string                    `json:"error_code,omitempty"`
 	ProviderResponse          string                    `json:"provider_response,omitempty"`
 	ProviderResponseTruncated bool                      `json:"provider_response_truncated,omitempty"`
-	DeadlineAtMS              int64                     `json:"deadline_at_ms"`
-	CreateAtMS                int64                     `json:"create_at_ms"`
+	// Warnings carries the Provider's bounded, non-fatal findings about a request
+	// it still executed. It is stored so a command read after the fact still
+	// explains what the Provider could not honour; dropping it here would make the
+	// warning visible only in the immediate response and lost on every later read.
+	Warnings     []string `json:"warnings,omitempty"`
+	DeadlineAtMS int64    `json:"deadline_at_ms"`
+	CreateAtMS   int64    `json:"create_at_ms"`
 }
 
 // MarshalJSON preserves the legacy exported field names while exposing stable snake-case fields.
@@ -55,6 +60,7 @@ func (r CommandRecord) MarshalJSON() ([]byte, error) {
 	fields["ErrorCode"] = r.ErrorCode
 	fields["ProviderResponse"] = r.ProviderResponse
 	fields["ProviderResponseTruncated"] = r.ProviderResponseTruncated
+	fields["Warnings"] = r.Warnings
 	fields["DeadlineAtMS"] = r.DeadlineAtMS
 	fields["CreateAtMS"] = r.CreateAtMS
 	return json.Marshal(fields)

@@ -123,6 +123,12 @@ const (
 	MaxProviderTargetBytes = 4096
 	// MaxProviderResponseBytes bounds one opaque provider response.
 	MaxProviderResponseBytes = 64 << 10
+	// MaxWarningBytes bounds one provider warning, and MaxWarnings bounds how many
+	// a single result may carry. Both are needed because a warning is rendered to
+	// the operator: an unbounded list of unbounded strings would let a provider
+	// flood a terminal, which is the same reason provider_response is bounded.
+	MaxWarningBytes = 512
+	MaxWarnings     = 8
 	// MaxErrorMessageBytes bounds one provider error message.
 	MaxErrorMessageBytes = 4 << 10
 )
@@ -282,6 +288,14 @@ type OperationResult struct {
 	// provider that never reports this field leaves every signal_sent operation
 	// permanently non-terminal.
 	ExitConfirmed bool `json:"exit_confirmed,omitempty"`
+	// Warnings carries bounded, non-fatal findings the provider reports about a
+	// request it still executed. A warning is never a rejection: the operation
+	// ran, and the warning explains what the provider could not honour. It is a
+	// separate field rather than prose inside ProviderResponse because
+	// ProviderResponse is the provider's own document, forwarded verbatim, and
+	// prefixing a Cluster-facing sentence into it would make the Cluster a second
+	// author of that document.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ProviderError is one standard Provider CLI error document.

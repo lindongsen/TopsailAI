@@ -191,6 +191,11 @@ type operationResult struct {
 	StartedAtMS               int64  `json:"started_at_ms,omitempty"`
 	FinishedAtMS              int64  `json:"finished_at_ms,omitempty"`
 	ExitConfirmed             bool   `json:"exit_confirmed,omitempty"`
+	// Warnings mirrors the production Provider field so the mock stays a
+	// conforming reference. The Cluster decoder is strict, so a mock that could
+	// not carry this field would make the warning path unexercisable in
+	// conformance and BDD.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type outputSnapshot struct {

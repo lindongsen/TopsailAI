@@ -239,6 +239,13 @@ type operationResult struct {
 	ProviderResponseTruncated bool   `json:"provider_response_truncated"`
 	StartedAtMS               int64  `json:"started_at_ms,omitempty"`
 	FinishedAtMS              int64  `json:"finished_at_ms,omitempty"`
+	// Warnings carries bounded, non-fatal findings about a request the Provider
+	// still executed. A warning is never a rejection: the operation ran, and the
+	// warning explains what the Provider could not honour. It is a separate field
+	// rather than prose inside ProviderResponse because ProviderResponse is the
+	// Provider's own document, forwarded verbatim, and prefixing a Cluster-facing
+	// sentence into it would make the Cluster a second author of that document.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type outputSnapshot struct {

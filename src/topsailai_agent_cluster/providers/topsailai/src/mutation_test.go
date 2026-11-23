@@ -610,10 +610,34 @@ func TestInterruptArgsRejectsAnUnsupportedAction(t *testing.T) {
 		`{"action":"clear_interrupt"}`,
 		`{"action":""}`,
 		`{}`,
-		`{"action":"hard_interrupt","message":"not allowed"}`,
 	} {
 		if _, err := interruptArgs("s-1", json.RawMessage(payload)); err == nil {
 			t.Fatalf("payload %s was accepted, want a rejection", payload)
+		}
+	}
+}
+
+// TestInterruptArgsDropsTheMessageOnAHardInterrupt proves a hard interrupt with a
+// message still produces the provider argv instead of being refused.
+//
+// The Cluster contract permits a message on either action, so refusing one here
+// made a contract-legal request unreachable and reported it as an invalid payload.
+// The provider has no text to carry for a hard interrupt, so the message is dropped
+// and the command executes. The argv is asserted exactly, because the empty document
+// is the only evidence that the text was not forwarded: a `{"message":...}` document
+// would mean the provider received text it cannot use.
+func TestInterruptArgsDropsTheMessageOnAHardInterrupt(t *testing.T) {
+	argv, err := interruptArgs("s-1", json.RawMessage(`{"action":"hard_interrupt","message":"not delivered"}`))
+	if err != nil {
+		t.Fatalf("hard interrupt with a message was refused: %v", err)
+	}
+	want := []string{"runtime", "control", "hard_interrupt", "-s", "s-1", "-a", "{}", "--json"}
+	if len(argv) != len(want) {
+		t.Fatalf("argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q (full argv %v)", i, argv[i], want[i], argv)
 		}
 	}
 }
@@ -703,5 +727,38 @@ func TestResumeDoesNotDecideLivenessForASessionHandle(t *testing.T) {
 	}
 	if last := runner.calls[len(runner.calls)-1].args; !reflect.DeepEqual(last, []string{"workspace", "resume", "-s", "s-1", "--background", "--json"}) {
 		t.Fatalf("argv=%v", last)
+	}
+}
+
+// TestInterruptWarningsReportsADroppedHardMessage proves the warning is emitted
+// exactly when a message was dropped.
+//
+// The warning is the only evidence the operator gets that the text was not
+// delivered, so it must appear for the case that drops text and stay absent for
+// every case that delivers it. A warning on a soft interrupt would describe a loss
+// that never happened, and no warning on a hard interrupt would hide a real one.
+func TestInterruptWarningsReportsADroppedHardMessage(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    int
+	}{
+		{"hard with a message", `{"action":"hard_interrupt","message":"not delivered"}`, 1},
+		{"hard without a message", `{"action":"hard_interrupt"}`, 0},
+		{"hard with an empty message", `{"action":"hard_interrupt","message":""}`, 0},
+		{"soft with a message", `{"action":"soft_interrupt","message":"delivered"}`, 0},
+		{"soft without a message", `{"action":"soft_interrupt"}`, 0},
+		{"malformed payload", `{`, 0},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := interruptWarnings(json.RawMessage(testCase.payload))
+			if len(got) != testCase.want {
+				t.Fatalf("warnings = %v, want %d entries", got, testCase.want)
+			}
+			if testCase.want == 1 && !strings.Contains(got[0], "not delivered") {
+				t.Fatalf("warning %q does not say the message was not delivered", got[0])
+			}
+		})
 	}
 }

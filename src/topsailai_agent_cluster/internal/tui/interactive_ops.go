@@ -1082,7 +1082,7 @@ func renderInteractiveStartResult(out io.Writer, commandID string, result map[st
 		return err
 	}
 	receipt := ReceiptForStatus(result)
-	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
+	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated, receipt.Warnings)
 }
 
 // reconcileStoppedSelection leaves the session scope once a fresh inventory proves the

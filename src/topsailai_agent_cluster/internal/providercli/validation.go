@@ -660,6 +660,23 @@ func (r OperationResult) validate() error {
 	if r.ExitConfirmed && r.DeliveryBoundary == DeliveryNotStarted {
 		return fmt.Errorf("operation result confirms an exit at delivery boundary %q, where no process was started", r.DeliveryBoundary)
 	}
+	// A warning is rendered to the operator, so it is bounded in both count and
+	// length. An unbounded list would let a provider flood a terminal, and an
+	// empty warning carries no information while still occupying a rendered line.
+	if len(r.Warnings) > MaxWarnings {
+		return fmt.Errorf("operation result carries %d warnings, above the limit of %d", len(r.Warnings), MaxWarnings)
+	}
+	for _, warning := range r.Warnings {
+		if strings.TrimSpace(warning) == "" {
+			return errors.New("operation result carries an empty warning")
+		}
+		if len(warning) > MaxWarningBytes {
+			return fmt.Errorf("warning exceeds %d bytes", MaxWarningBytes)
+		}
+		if !utf8.ValidString(warning) {
+			return errors.New("warning must be valid UTF-8")
+		}
+	}
 	return nil
 }
 

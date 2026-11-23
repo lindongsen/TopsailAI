@@ -113,7 +113,14 @@ func (p *provider) execute(ctx context.Context, request request) (*operationResu
 	if err != nil {
 		return nil, err
 	}
-	return p.runMutation(ctx, request, args), nil
+	result := p.runMutation(ctx, request, args)
+	// The warning is attached after the run so it describes a command that actually
+	// executed. Attaching it before the run would report a dropped message on an
+	// invocation that never started, which would describe a loss that did not happen.
+	if operation == operationExecutionInterrupt {
+		result.Warnings = interruptWarnings(request.Payload)
+	}
+	return result, nil
 }
 
 // validateExecuteRequest checks the frozen execute request contract.

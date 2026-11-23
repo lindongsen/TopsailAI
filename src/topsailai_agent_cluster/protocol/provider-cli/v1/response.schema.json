@@ -433,6 +433,14 @@
         },
         "exit_confirmed": {
           "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          }
         }
       }
     },

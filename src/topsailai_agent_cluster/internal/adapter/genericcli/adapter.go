@@ -1222,6 +1222,10 @@ func receiptFromOperation(result providercli.OperationResult) protocol.Execution
 		// signal_sent operation non-terminal in the Cluster journal, because
 		// storage keeps signal_sent && !exit_confirmed at "executing".
 		ExitConfirmed: result.ExitConfirmed,
+		// The Provider's warnings are carried through unchanged. The Cluster does
+		// not author, merge or filter them: a warning describes what the Provider
+		// could not honour, and only the Provider knows that.
+		Warnings: result.Warnings,
 	}
 }
 

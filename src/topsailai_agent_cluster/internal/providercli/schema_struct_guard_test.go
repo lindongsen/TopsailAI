@@ -254,6 +254,7 @@ func TestOperationResultDeclaresNoSurvivalField(t *testing.T) {
 		"provider_response",
 		"provider_response_truncated",
 		"started_at_ms",
+		"warnings",
 	}
 	actual := make([]string, 0, len(properties))
 	for name := range properties {

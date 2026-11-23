@@ -188,9 +188,11 @@ type interruptPayload struct {
 //
 // The action is validated against the closed Cluster vocabulary before any argv
 // exists, so an unknown action fails closed instead of reaching the provider as an
-// arbitrary instruction name. The message is only accepted for a soft interrupt,
-// because a hard interrupt has no text to carry and silently dropping one would
-// report a delivery the operator did not ask for.
+// arbitrary instruction name. Both actions accept a message, because the Cluster
+// contract permits one on either; a hard interrupt has no text to carry, so its
+// message is dropped and reported as a warning rather than refused. Refusing it
+// would make a contract-legal request unreachable, and the operator would read a
+// rejected command instead of a delivered one.
 //
 // sessionID is the provider session identifier, not the opaque mapping key: the
 // provider CLI addresses a session by its own identifier, and the mapping key is a
@@ -215,11 +217,42 @@ func interruptArgs(sessionID string, payload json.RawMessage) ([]string, error) 
 		}
 		return []string{"runtime", "control", interruptActionSoft, "-s", sessionID, "-a", string(document), "--json"}, nil
 	case interruptActionHard:
-		if value.Message != "" {
-			return nil, fmt.Errorf("%w: hard_interrupt does not accept a message", errInvalidRequest)
-		}
+		// A hard interrupt carries no text, so a message is dropped instead of
+		// refused. The Cluster contract permits a message on either action, and
+		// refusing one here would make a contract-legal request unreachable while
+		// reporting it as an invalid payload. The drop is reported as a warning so
+		// the operator learns the text was not delivered.
 		return []string{"runtime", "control", interruptActionHard, "-s", sessionID, "-a", "{}", "--json"}, nil
 	default:
 		return nil, fmt.Errorf("%w: interrupt action %q is not supported", errInvalidRequest, value.Action)
 	}
+}
+
+// hardInterruptDropsMessage reports whether this payload carries text a hard
+// interrupt cannot deliver.
+//
+// It is one predicate rather than two checks because the argv builder and the
+// warning reporter must agree: a builder that dropped a message while the reporter
+// stayed silent would deliver a command whose text vanished with no evidence, and a
+// reporter that warned about a message the builder forwarded would describe a loss
+// that never happened.
+func hardInterruptDropsMessage(value interruptPayload) bool {
+	return value.Action == interruptActionHard && value.Message != ""
+}
+
+// interruptWarnings reports the non-fatal findings for one interrupt payload.
+//
+// A warning is not a rejection: the operation still runs, and the warning explains
+// what the provider could not honour. It is returned separately from the argv so the
+// Cluster can carry it to the operator without editing the provider's own response
+// document.
+func interruptWarnings(payload json.RawMessage) []string {
+	var value interruptPayload
+	if err := decodeStrict(payload, &value); err != nil {
+		return nil
+	}
+	if !hardInterruptDropsMessage(value) {
+		return nil
+	}
+	return []string{"hard_interrupt carries no message, so the supplied message was not delivered"}
 }

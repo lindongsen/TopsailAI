@@ -155,6 +155,10 @@ func TestOperationResultAcceptsOnlyProviderEvidence(t *testing.T) {
 		"provider_response",
 		"provider_response_truncated",
 		"started_at_ms",
+		// A warning is provider evidence: only the Provider knows what it could
+		// not honour, and the Cluster forwards the list unchanged. It is not a
+		// Cluster journal field, so it belongs in this set.
+		"warnings",
 	}
 	if len(providerEvidence) == 0 {
 		t.Fatal("no provider-evidence name was enumerated, so this guard checked nothing")

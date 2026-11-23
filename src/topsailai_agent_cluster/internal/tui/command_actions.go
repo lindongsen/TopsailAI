@@ -235,7 +235,7 @@ func renderReceiptDetails(out io.Writer, receipt protocol.ExecutionReceipt) erro
 			return err
 		}
 	}
-	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated)
+	return renderProviderResponse(out, receipt.ProviderResponse, receipt.ProviderResponseTruncated, receipt.Warnings)
 }
 
 // renderProviderResponse prints the provider's own return document as a separate
@@ -257,7 +257,14 @@ func renderReceiptDetails(out io.Writer, receipt protocol.ExecutionReceipt) erro
 //
 // Escape sequences are not stripped here: the terminal boundary already does that,
 // and the stored document must stay faithful to what the provider returned.
-func renderProviderResponse(out io.Writer, response string, truncated bool) error {
+func renderProviderResponse(out io.Writer, response string, truncated bool, warnings []string) error {
+	// Warnings print before the provider document, because they describe what this
+	// invocation could not honour and the operator needs that before reading the
+	// provider's own answer. A warning is never a failure: the command ran, so the
+	// section is labelled as a warning rather than an error.
+	if err := renderWarnings(out, warnings); err != nil {
+		return err
+	}
 	if response == "" {
 		return nil
 	}
@@ -269,4 +276,29 @@ func renderProviderResponse(out io.Writer, response string, truncated bool) erro
 	}
 	_, err := fmt.Fprintf(out, "provider_response_truncated: true (limit %d bytes)\n", protocol.MaxProviderResponseBytes)
 	return err
+}
+
+// renderWarnings prints the provider's non-fatal findings as their own section.
+//
+// The section is separate from provider_response because the two answer different
+// questions: a warning says what this invocation could not honour, while the
+// provider document is the provider's own answer. Merging them would make a
+// Cluster-authored sentence part of the provider's document, which the Cluster
+// must never do.
+//
+// An empty list prints nothing, so a provider that reports no warning keeps the
+// previous output byte-identical.
+func renderWarnings(out io.Writer, warnings []string) error {
+	if len(warnings) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "warnings:\n"); err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		if _, err := fmt.Fprintf(out, "  - %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
 }

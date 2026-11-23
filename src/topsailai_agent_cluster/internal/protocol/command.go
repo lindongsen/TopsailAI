@@ -211,6 +211,12 @@ type ExecutionReceipt struct {
 	ProviderResponse          string           `json:"provider_response,omitempty"`
 	ProviderResponseTruncated bool             `json:"provider_response_truncated,omitempty"`
 	ExitConfirmed             bool             `json:"exit_confirmed"`
+	// Warnings carries the Provider's bounded, non-fatal findings about a request
+	// it still executed. It is copied from the Provider result unchanged, because
+	// the Cluster does not author a Provider's warning: it only carries it to the
+	// operator. A warning never changes the phase or the effect certainty, so a
+	// command that ran is still reported as having run.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Budget separates execution, local CLI, and caller wait limits.
