@@ -47,6 +47,7 @@ context:
   _:
     - "README.md"
     - "LEARN.md"
+    - "MEMORY.md"
     - docs/README.md
     - docs/usage/README.md
   # Default item: no extra context sources.

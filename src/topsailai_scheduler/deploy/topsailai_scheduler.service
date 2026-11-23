@@ -51,10 +51,31 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
 # ProtectSystem=strict makes the filesystem read-only, so the paths the daemon
-# writes must be listed: the control socket folder, the task lock files, and the
-# run workspace. The socket folder is named by its real path because
-# /root/.topsailai is a symlink and systemd resolves ReadWritePaths entries.
-ReadWritePaths=/work/hosts/.topsailai /work/scheduler
+# writes must be listed: the control socket folder, the task lock files, the
+# run workspace, the git directory of the repository the daily task commits
+# into, and that repository's .gitignore. The socket folder is named by its real
+# path because /root/.topsailai is a symlink and systemd resolves ReadWritePaths
+# entries.
+#
+# /work/.git is required by the daily task: it runs `git add` and `git commit`,
+# which create .git/index.lock and rewrite .git/index, .git/HEAD and the refs.
+# Without this entry those writes fail with EROFS even though the process is
+# root, because the read-only mount is enforced by the kernel, not by DAC.
+#
+# /work/.gitignore is a single file, not a directory, so systemd bind-mounts
+# that one file read-write and leaves the rest of the repository root read-only.
+# The daily task edits it to keep generated artifacts out of the index. The file
+# must exist before the unit starts, because systemd refuses to bind-mount a
+# missing path.
+#
+# The ai-reflection folder holds the skill's resident topic map and the promoted
+# rule list the daily task maintains. It is granted as a directory rather than a
+# single file because HAZARDS.md may not exist yet and systemd refuses to
+# bind-mount a missing path. The grant covers that one folder only: SKILL.md and
+# the rest of the skill tree stay read-only, so the task cannot rewrite the
+# instructions it is following. The path is written in resolved form because
+# /work/hosts/.topsailai/skill/skills-dev is a symlink chain that ends here.
+ReadWritePaths=/work/hosts/.topsailai /work/scheduler /work/.git /work/.gitignore /work/skills/software-development/ai-self-improvement-for-coding/ai-reflection
 LimitNOFILE=65536
 
 [Install]

@@ -23,7 +23,7 @@ from typing import Optional
 
 import _import_topsailai  # noqa: F401
 
-import topsailai_session_info as session_info
+from cli_topsailai import session_info_format as session_info
 
 from cli_topsailai.colors import Colors, colored
 from cli_topsailai.paths import get_topsailai_home

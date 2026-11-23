@@ -1214,3 +1214,41 @@ invocation is usually the cheapest one — instead of treating a parse check as
 verification. Also read the import block back after editing it: a range
 replacement that repeats a surviving line leaves a duplicate import, which is
 harmless to the parser but a sign the edit was not bounded correctly.
+
+## A top-level CLI script is an executable in a compiled build, never a module
+
+### Trigger
+
+`topsailai session info wa-95c71663d20b --json` crashed on a compiled install
+with `ModuleNotFoundError: No module named 'topsailai_session_info'` at
+`cli_topsailai/session_cli.py:118`. The source tree worked, so the failure only
+existed in the shipped artifact.
+
+### Action taken
+
+Read the packaging tool and found the artifact kind is decided by the first line
+of the file: a `#!/usr/bin/env python` shebang compiles the script with
+`cython --embed` into a standalone ELF executable, while a file without it
+compiles into an importable `.so`. Every top-level CLI script has the shebang, so
+none of them is importable in a compiled build. Moved the shared renderers into
+`cli_topsailai/session_info_format.py` (compiled to `.so`), reduced
+`topsailai_session_info.py` to a thin entry point that re-exports them, pointed
+`topsailai_sessions_info.py` and `runtime_info.py` at the package module, and
+made `session_cli._handle_info` dispatch through the existing `_run_script`
+child-command helper. Fixed the same defect in `completer.py`, which imported
+`topsailai_send_control` only to reach `cli_topsailai.runtime_control`. Verified
+with a meta-path blocker that simulates the compiled build: the fixed modules
+import and the old imports reproduce the exact reported error, plus 4694 passing
+unit tests and a real command run.
+
+### Why this prevents recurrence
+
+Whether a file is a module or an executable is a property of the build, not of
+the source, so an import that works in the source tree can be impossible in the
+artifact. Any shared code must live in the package that compiles to an importable
+extension, and any script-to-script call must go through the installed command.
+The way to prove it is to block the script names from `sys.meta_path` and import
+the consumer, because a passing source-tree test proves nothing about the shipped
+build. Also sweep the whole tree for the pattern instead of fixing the one
+reported line: four other cross-script imports had the same defect and were
+latent crashes waiting for their own command to be run.

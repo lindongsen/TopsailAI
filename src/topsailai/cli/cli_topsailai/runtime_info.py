@@ -261,11 +261,12 @@ def _failure_document(session_id: str, error_code: str, message: str) -> str:
 
     A failure carries no metafile and no runtime, so inventing empty groups
     would make a failure indistinguishable from a real record whose fields
-    happen to be empty.
+    happen to be empty. The formatter lives in the package because a compiled
+    build ships ``topsailai_session_info`` as an executable, not as a module.
     """
-    import topsailai_session_info as session_info
+    from cli_topsailai.session_info_format import _format_failure_json
 
-    return session_info._format_failure_json(session_id, error_code, message)
+    return _format_failure_json(session_id, error_code, message)
 
 
 def run_info(request: RuntimeInfoRequest, *, home: str) -> int:
