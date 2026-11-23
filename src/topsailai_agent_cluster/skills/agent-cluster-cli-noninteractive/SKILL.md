@@ -167,11 +167,18 @@ reporting an error.
   **generation**, and the confirmation line shows `parameters={"text":"hello"}`. Three or more
   words are rejected with `unexpected arguments "..."; quote the message text so it stays one
   argument`. Always pass one quoted argument, or omit the text and pipe a multi-line block.
-- **`interrupt` needs an action word inside the quoted text.** `interrupt ep res "soft stop now"`
-  submits `{"action":"soft_interrupt","message":"stop now"}`. A quoted message with no action
-  word is a usage error (`usage: interrupt [soft|hard] [message]`), because guessing `soft` from
-  free text would hide the choice. `hard` accepts no message. A bare `interrupt ep res` submits
-  the hard default. Unquoted `interrupt ep res hard msg` parses `msg` as the generation.
+- **`interrupt` takes one text slot, not an action slot plus a message slot.** The whole
+  `soft`/`hard` word and any message must be inside **one** quoted argument:
+  `interrupt ep res "soft stop now"` submits `{"action":"soft_interrupt","message":"stop now"}`.
+  The usage error prints `usage: interrupt [soft|hard] [message]`, which reads as two slots and
+  is wrong; following it literally with `interrupt ep res soft "stop now"` puts the message in
+  the generation slot, submits `{"action":"soft_interrupt"}` with no message, and then fails with
+  `target_generation_mismatch` — a cause that has nothing to do with the real mistake. `hard`
+  accepts no message, and a bare `interrupt ep res` submits the hard default. Also accepted but
+  undocumented: `s`, `h`, `soft_interrupt`, `hard_interrupt`, and a JSON object such as
+  `{"action":"soft_interrupt","message":"..."}`. A JSON object is forwarded without local
+  validation, so a typo or an unknown action is only refused by the Endpoint, as a rejected
+  receipt with `invalid_request` and `effect_certainty: not_applied`.
 - **`exec` requires `--`.** Without it the command reports
   `usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>`. The argv array comes from
   the shell's own word splitting and is never re-tokenized. The endpoint-only form
