@@ -103,33 +103,64 @@ interrupt needs an action word (soft or hard) before the message; with 3 positio
 command the action word is either misspelled or missing; run help interrupt for valid syntax
 ```
 
-## Remaining gap: the JSON form still forwards unknown fields
+## The JSON form is validated locally against a closed field set
 
-The JSON form is now bound to the positional action word: a conflicting or unknown `action` is
-refused locally, and `{}` receives the action word instead of being sent empty.
+The JSON form is bound to the positional action word, and its field set is closed. A conflicting or
+unknown `action` is refused locally, `{}` receives the action word instead of being sent empty, and a
+field outside `{action, message}` is refused by name.
 
 ```text
 interrupt soft <ep> <res> '{"action":"nuke"}'            -> exit 2, JSON action nuke conflicts with the "soft_interrupt" action word
 interrupt soft <ep> <res> '{}'                           -> exit 2, parameters={"action":"soft_interrupt"}
+interrupt soft <ep> <res> '{"action":"soft_interrupt","msg":"x"}'
+                                                         -> exit 2, JSON field "msg" is not part of the interrupt payload; only action and message are accepted
+interrupt soft <ep> <res> '{"action":"soft","message":"x"}'
+                                                         -> exit 2, the document carries the wire action name
 ```
 
-An unknown **field** is still forwarded, so `{"action":"soft_interrupt","msg":"x"}` reaches the
-Endpoint and is refused there with `invalid_request` / `not_applied`. This is the project-wide
-convention rather than an `interrupt` omission: `MessagePayload` has the identical shape, and `ctl`
-is the exception because `ctlPayload` and `ctlPreflightAction` validate more. The action is the
-safety-relevant part and it is now validated locally; a stricter field check remains a separate
-decision.
+The closed set is not a new convention invented here. The provider decodes exactly these two fields
+with a strict decoder (`providers/topsailai/src/mutation_argv.go:176-179`), so an unknown key was
+already a hard error there. Refusing it locally converts a wasted round trip, which had already asked
+the operator for confirmation, into an immediate error that names the offending key.
 
-## Accepted spellings
+The two layers carry different spellings on purpose. The command line carries the CLI word (`soft`),
+and the JSON document carries the wire name (`soft_interrupt`), because the document is what reaches
+the provider. A CLI word inside the document is refused rather than translated, so an operator can
+never believe the document is the command line.
 
-`interruptActions` accepts six spellings: `soft`, `hard`, `s`, `h`, `soft_interrupt`,
-`hard_interrupt`. `help interrupt` documents `soft` and `hard`. The abbreviations and the JSON form
-are accepted but undocumented; documenting or removing them remains open.
+## Accepted spellings are exactly the two documented words
+
+`interruptActions` accepts `soft` and `hard`. The abbreviations `s` and `h`, and the wire names
+`soft_interrupt` and `hard_interrupt`, are refused.
+
+The reason is consistency rather than minimalism. `drive` accepts `start`, `stop` and `status` with no
+abbreviations, and a `ctl` action name is exact. Keeping an abbreviation here would make `interrupt`
+the only command where an operator has to guess whether a short form exists. The wire names stay
+distinct from the CLI words because they are what the provider decodes, and they are never typed.
+
+## Provider limitation: this provider refuses a message on `hard`
+
+The cluster contract allows a message on both actions, and the cluster forwards it without deciding
+which action may carry one. The shipped TopsailAI provider does not implement that: it returns
+`hard_interrupt does not accept a message` as `invalid_request` with `not_applied`
+(`providers/topsailai/src/mutation_argv.go:218-220`, asserted by `mutation_test.go:613`).
+
+This is a provider limitation, not a cluster contract violation. The cluster side must not be
+narrowed to match it, because narrowing the contract to one provider's current behaviour is exactly
+the coupling the abstraction layer exists to prevent. An operator on this provider therefore sees a
+`hard` interrupt with a message refused at the provider seam, after the cluster accepted it.
 
 ## Evidence
 
-All commands were read-only or refused before execution; no live session was interrupted. The target
-`res_8e7ef4b41d733a75867ccbff38c1dcd0` stayed `running` with generation `626121439` throughout.
+All commands were read-only or refused before execution; no live session was interrupted.
+
+An earlier version of this section claimed the target `res_8e7ef4b41d733a75867ccbff38c1dcd0` stayed
+`running` with generation `626121439` throughout. That claim is withdrawn. The provider session
+`wa-74a99df8715a` (pid 1869631) records `status: completed` with `end_ts: 2026-11-23T13:07:11`, and
+its stdout ends at its own `Your Turn` prompt with `q` typed. The interrupt attempts ran at
+09:57-09:59 and were all refused before the provider built argv, so they did not end it; the session
+finished on its own about three hours later. The correct statement is that no attempt reached the
+provider, not that the target was still running afterwards.
 
 ```text
 interrupt soft <ep> <res> "stop now"                     -> exit 2, parameters={"action":"soft_interrupt","message":"stop now"}
@@ -137,12 +168,31 @@ interrupt hard <ep> <res> "please stop"                  -> exit 2, parameters={
 interrupt <ep> <res>                                     -> exit 2, parameters={"action":"hard_interrupt"}   (documented default)
 interrupt <ep> <res> "stop now"                          -> exit 2, needs an action word (soft or hard) before the message
 interrupt nope <ep> <res>                                -> exit 2, needs an action word (soft or hard) before the message
+interrupt s <ep> <res>                                   -> exit 2, needs an action word (soft or hard) before the message
+interrupt h <ep> <res>                                   -> exit 2, needs an action word (soft or hard) before the message
+interrupt soft_interrupt <ep> <res>                      -> exit 2, needs an action word (soft or hard) before the message
 interrupt soft <ep> <res> stop now                       -> exit 2, unexpected arguments "stop now"; quote the message text
 interrupt soft <ep> <res> "stop now" --generation <gen>  -> exit 2, parameters={"action":"soft_interrupt","message":"stop now"}
 interrupt soft <ep> <res> '{"action":"nuke"}'            -> exit 2, JSON action nuke conflicts with the "soft_interrupt" action word
 interrupt soft <ep> <res> '{}'                           -> exit 2, parameters={"action":"soft_interrupt"}
+interrupt soft <ep> <res> '{"action":"soft_interrupt","msg":"x"}'
+                                                         -> exit 2, JSON field "msg" is not part of the interrupt payload
+interrupt soft <ep> <res> '{"action":"soft","message":"x"}'
+                                                         -> exit 2, the document carries the wire action name
+interrupt soft <ep> <res> 'use {braces} here'            -> exit 2, parameters={"action":"soft_interrupt","message":"use {braces} here"}
 ```
 
-Both refusal assertions were proven reachable by deliberately breaking the guard: restoring the old
-wording failed the positive assertion, and keeping the wording while naming the endpoint failed the
-negative assertion.
+Every guard was proven reachable by deliberately breaking it and observing the matching test fail:
+removing the closed-field-set check failed `TestInterruptPayloadRefusesFieldsOutsideTheClosedSet`,
+and re-adding `"s"` to the action table failed `TestInterruptActionWordsAreExactlyTheDocumentedPair`
+with `undocumented action word "s" is accepted`. Both breaks were restored immediately.
+
+One defect was found only by running the real binary, not by any unit test. `main.go` stored the wire
+name into `interruptAction` and passed it to `InterruptPayload`, which maps a CLI word to a wire name
+and does not accept a wire name, so every interrupt failed with the usage string. The unit tests
+called `InterruptPayload` directly with CLI words and therefore never exercised the composition.
+`TestInterruptActionWordFeedsInterruptPayload` now asserts that composition, and `InterruptActionWord`
+returns the normalized CLI word.
+
+Verification after the change: `make test-unit` green across all four component groups,
+`make test-bdd` green for all six groups, `make test-integration` green at 94.261s.

@@ -183,11 +183,23 @@ reporting an error.
   would send `stop` as the message and `now` as the expected generation. Use
   `interrupt ep res soft "stop now" --generation <gen>`. An unquoted message is then refused with
   `unexpected arguments "stop now"; quote the message text so it stays one argument`.
-- **`interrupt` also accepts undocumented spellings and a JSON object.** `s`, `h`,
-  `soft_interrupt` and `hard_interrupt` are accepted action words. A JSON object such as
-  `{"action":"soft_interrupt","message":"..."}` is also accepted, but it is forwarded without local
-  validation, so a typo or an unknown action is only refused by the Endpoint, as a rejected receipt
-  with `invalid_request` and `effect_certainty: not_applied`. Prefer the plain form.
+- **`interrupt` accepts exactly two action words.** `soft` and `hard` are the only CLI words;
+  `s`, `h`, `soft_interrupt` and `hard_interrupt` are refused with
+  `interrupt needs an action word (soft or hard) before the message`. The wire names
+  `soft_interrupt` and `hard_interrupt` are what the provider decodes, so they appear in the
+  payload and never on the command line.
+- **The `interrupt` JSON form is validated locally.** A JSON object in the message slot is
+  accepted, but only with the fields `action` and `message`, and `action` must be the wire name
+  that agrees with the action word. `{"action":"soft_interrupt","msg":"x"}` is refused with
+  `JSON field "msg" is not part of the interrupt payload`, and `{"action":"soft"}` is refused
+  with `the document carries the wire action name`. An empty `{}` receives the action word, so
+  `interrupt soft ep res '{}'` submits `{"action":"soft_interrupt"}`. Prefer the plain form.
+- **A message on `hard` is refused by the shipped provider, not by the cluster.** The cluster
+  contract allows a message on both actions and forwards it without deciding which action may carry
+  one. The TopsailAI provider does not implement that: `interrupt hard ep res "please stop"` is
+  accepted by the cluster and then refused at the provider seam with
+  `hard_interrupt does not accept a message` as `invalid_request` / `not_applied`. Treat this as a
+  provider limitation rather than a syntax error, and use `soft` when a message must reach the agent.
 - **`exec` requires `--`.** Without it the command reports
   `usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>`. The argv array comes from
   the shell's own word splitting and is never re-tokenized. The endpoint-only form

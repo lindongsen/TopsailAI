@@ -401,14 +401,16 @@ func rejectJSONFlagPayload(text, name string) error {
 	return fmt.Errorf("interactive %s does not support --json", name)
 }
 
-// interruptActions maps every accepted plain spelling to the standard action name.
+// interruptActions maps the accepted CLI action words to the standard wire action
+// name. The CLI accepts exactly the two words the help documents, because a second
+// spelling of one word is a second grammar: drive accepts start, stop and status
+// with no abbreviations, and a control action name is exact, so an abbreviation
+// here would be the only place an operator has to guess which short form exists.
+// The wire names stay distinct from the CLI words on purpose: soft_interrupt and
+// hard_interrupt are what the provider decodes, and they are never typed.
 var interruptActions = map[string]string{
-	"soft":           "soft_interrupt",
-	"soft_interrupt": "soft_interrupt",
-	"s":              "soft_interrupt",
-	"hard":           "hard_interrupt",
-	"hard_interrupt": "hard_interrupt",
-	"h":              "hard_interrupt",
+	"soft": "soft_interrupt",
+	"hard": "hard_interrupt",
 }
 
 // ParseInterruptArguments splits the interrupt tail into its action word and its
@@ -434,13 +436,17 @@ func ParseInterruptArguments(args []string) (action, message string, err error) 
 	return action, message, nil
 }
 
-// InterruptActionWord reports whether word is an accepted interrupt action spelling
-// and returns the standard action name. The standalone command uses it to decide
-// whether the action word occupies its own positional slot, so the grammar is
-// resolved from the same table that validates it rather than from a second list.
+// InterruptActionWord reports whether word is an accepted interrupt action word and
+// returns that word normalized. The standalone command uses it to decide whether the
+// action word occupies its own positional slot, so the grammar is resolved from the
+// same table that validates it rather than from a second list. It returns the CLI
+// word and not the wire name, because the caller passes the result straight back into
+// InterruptPayload: returning the wire name there made every interrupt fail, since
+// InterruptPayload maps a CLI word to a wire name and does not accept a wire name.
 func InterruptActionWord(word string) (string, bool) {
-	standard, known := interruptActions[strings.ToLower(strings.TrimSpace(word))]
-	return standard, known
+	normalized := strings.ToLower(strings.TrimSpace(word))
+	_, known := interruptActions[normalized]
+	return normalized, known
 }
 
 // InterruptPayload converts the plain interrupt grammar into the standard payload.
@@ -476,20 +482,46 @@ func InterruptPayload(name, action, message string) (json.RawMessage, error) {
 	return json.RawMessage(encoded), nil
 }
 
+// interruptWireActions is the closed set of action values the provider decodes.
+// The JSON advanced form carries the wire value, because that document is what
+// reaches the provider, while the command line carries the CLI word. One spelling
+// per layer keeps the two from drifting: a CLI word inside the document is refused
+// rather than translated, so an operator can never believe the document is the
+// command line.
+var interruptWireActions = map[string]bool{
+	"soft_interrupt": true,
+	"hard_interrupt": true,
+}
+
+// interruptPayloadFields is the closed field set of the interrupt payload. The
+// provider decodes exactly these two fields with a strict decoder, so any other
+// key is refused there. Refusing it here instead turns a wasted round trip into a
+// local error, and names the offending key so a typo is visible immediately.
+var interruptPayloadFields = map[string]bool{
+	"action":  true,
+	"message": true,
+}
+
 // advancedInterruptPayload accepts a JSON object in the message slot and binds it
 // to the action word the operator already stated. An object that names a different
 // action is refused instead of silently overriding the positional choice, because
-// two spellings of one intent must never disagree.
+// two spellings of one intent must never disagree. A field outside the closed set
+// is refused as well, because the provider's strict decoder would reject it after
+// a round trip while the local surface had already asked for confirmation.
 func advancedInterruptPayload(name, standard, document string) (json.RawMessage, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(document), &payload); err != nil || payload == nil {
 		return nil, fmt.Errorf("usage: %s [soft|hard] [message]", name)
 	}
+	for field := range payload {
+		if !interruptPayloadFields[field] {
+			return nil, fmt.Errorf("%s: JSON field %q is not part of the interrupt payload; only action and message are accepted", name, field)
+		}
+	}
 	if raw, present := payload["action"]; present {
 		declared, isText := raw.(string)
-		mapped, known := interruptActions[strings.ToLower(strings.TrimSpace(declared))]
-		if !isText || !known || mapped != standard {
-			return nil, fmt.Errorf("%s: JSON action %v conflicts with the %q action word; state the action once", name, raw, standard)
+		if !isText || !interruptWireActions[declared] || declared != standard {
+			return nil, fmt.Errorf("%s: JSON action %v conflicts with the %q action word; the document carries the wire action name, so state the action once", name, raw, standard)
 		}
 	}
 	payload["action"] = standard

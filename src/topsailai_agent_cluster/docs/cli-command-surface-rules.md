@@ -1082,6 +1082,17 @@ an oversight, and it applies only to the interactive surface.
   implementation detail. The generation travels in `--generation` only, because a
   positional generation is an unconstrained string and would be indistinguishable
   from a second word of an unquoted message.
+- `interrupt` accepts exactly the two action words its help advertises. `s`, `h`,
+  `soft_interrupt` and `hard_interrupt` are refused, because an abbreviation or a
+  wire name accepted as a CLI word is a second grammar for one concept: `drive`
+  accepts `start`, `stop` and `status` with no abbreviations, and a control action
+  name is exact. The wire names stay reachable inside the JSON advanced form, where
+  they are the provider's own vocabulary, so each layer keeps one spelling.
+- The `interrupt` JSON advanced form is validated locally against the provider's
+  closed field set. Only `action` and `message` are accepted, and `action` must be
+  the wire name that agrees with the action word. A field outside that set is
+  refused with the offending key named, because the provider's strict decoder would
+  reject it after a round trip that had already asked for confirmation.
 
 ## Progress lines
 
