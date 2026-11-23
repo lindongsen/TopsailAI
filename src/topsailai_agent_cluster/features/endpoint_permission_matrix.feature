@@ -133,6 +133,18 @@ Feature: endpoint command authorization
     When the agent model select command is submitted with that credential
     Then the command is refused with policy denied and the provider is not invoked
 
+  Scenario: an allowed machine model declaration reaches the provider once
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted to set the machine model
+    When the agent model set command is submitted with that credential
+    Then the command is accepted and the provider is invoked once
+
+  Scenario: a machine model declaration without the control permission is refused before the provider
+    Given a real cluster that publishes a live and a stopped session
+    And a credential permitted only to view
+    When the agent model set command is submitted with that credential
+    Then the command is refused with policy denied and the provider is not invoked
+
   # command.exec is Endpoint-native by contract: the Endpoint keeps the allowlist,
   # the working directory, the confinement, the minimal environment, the timeout
   # and the exact-process cleanup, and it does not start the provider CLI for this

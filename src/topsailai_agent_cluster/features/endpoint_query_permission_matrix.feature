@@ -19,6 +19,13 @@ Feature: Endpoint query permission matrix
     When the model catalog is read with the read output credential
     Then the model catalog read is refused with policy denied and exposes nothing
 
+  Scenario: The model registry read is authorized by the view scope
+    Given a real cluster whose endpoint policy separates view from read output
+    When the model registry is read with the view credential
+    Then the model registry read is allowed and reaches the provider
+    When the model registry is read with the read output credential
+    Then the model registry read is refused with policy denied and exposes nothing
+
   Scenario: The project catalog read is authorized by the view scope
     Given a real cluster whose endpoint policy separates view from read output
     When the project catalog is read with the view credential

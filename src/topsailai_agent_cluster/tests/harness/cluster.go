@@ -485,6 +485,13 @@ func StartCluster(t testing.TB, options ClusterOptions) (*Cluster, error) {
 		{"name": "project.list", "version": "v1", "target_kinds": []string{"endpoint"}, "safety_class": "read_only", "required_permission": "view"},
 		{"name": "project.add", "version": "v1", "target_kinds": []string{"endpoint"}, "safety_class": "mutating", "required_permission": "control"},
 		{"name": "project.remove", "version": "v1", "target_kinds": []string{"project"}, "safety_class": "mutating", "required_permission": "control"},
+		// agent.model.set is target-less: it declares which model a launch from
+		// this machine should use, so it addresses the machine rather than a
+		// resource. Without this entry the Endpoint drops the capability at the
+		// intersection and the command is refused as unsupported before the policy
+		// hook, so the negative scenario would pass while proving nothing about
+		// authorization.
+		{"name": "agent.model.set", "version": "1", "target_kinds": []string{"endpoint"}, "safety_class": "mutating", "required_permission": "control"},
 	}
 	// A configured control action is advertised as a ctl. capability, because the
 	// catalog is the only source of ctl. actions and the adapter intersects the

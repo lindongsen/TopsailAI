@@ -23,9 +23,9 @@ import (
 // while proving nothing about authorization.
 func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a real cluster whose endpoint policy separates view from read output$`, startQueryMatrixCluster)
-	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
-	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
-	ctx.Step(`^the (model catalog|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
+	ctx.Step(`^the (model catalog|model registry|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) is read with the (view|read output) credential$`, performQueryRead)
+	ctx.Step(`^the (model catalog|model registry|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is allowed and reaches the provider$`, assertQueryAllowed)
+	ctx.Step(`^the (model catalog|model registry|project catalog|launch options|history|messages|metrics|detail|output snapshot|output follow) read is refused with policy denied and exposes nothing$`, assertQueryRefused)
 }
 
 // queryModelCatalogOperation is the provider operation name the mock records for
@@ -35,6 +35,7 @@ func registerEndpointQueryPermissionSteps(ctx *godog.ScenarioContext) {
 // zero while the provider had in fact been invoked.
 const (
 	queryModelCatalogOperation   = "model.catalog"
+	queryModelRegistryOperation  = "model.registry"
 	queryProjectCatalogOperation = "project.catalog"
 )
 
@@ -51,6 +52,7 @@ const (
 // The read operations under test, named as the feature file names them.
 const (
 	queryModelCatalog   = "model catalog"
+	queryModelRegistry  = "model registry"
 	queryProjectCatalog = "project catalog"
 	queryLaunchOptions  = "launch options"
 	queryHistory        = "history"
@@ -213,6 +215,15 @@ func performQueryRead(operation, credential string) error {
 		outcome.errorCode = result.ErrorCode
 		outcome.payloadSize = len(result.Profiles)
 		outcome.observedAtMS = result.ObservedAtMS
+	case queryModelRegistry:
+		// The registry addresses the machine, so it takes no target. Passing one
+		// would make the Endpoint refuse the read as malformed before the policy
+		// hook, and the refusal scenario would then pass for the wrong reason.
+		result, err := api.GetModelRegistry(ctx, scopedEndpointID)
+		outcome.err = err
+		outcome.errorCode = result.ErrorCode
+		outcome.payloadSize = len(result.Entries)
+		outcome.observedAtMS = result.ObservedAtMS
 	case queryProjectCatalog:
 		result, err := api.GetProjectCatalog(ctx, scopedEndpointID)
 		outcome.err = err
@@ -340,6 +351,21 @@ func assertQueryAllowed(operation string) error {
 		}
 		if count != 1 {
 			return fmt.Errorf("the provider received %d model catalog invocations, want exactly one", count)
+		}
+	case queryModelRegistry:
+		// The registry answers about the machine, so an empty entry list is a real
+		// answer rather than a failure. The observation stamp is what proves the
+		// adapter was consulted, and the invocation count proves it was consulted
+		// exactly once rather than once per entry.
+		if outcome.observedAtMS == 0 {
+			return fmt.Errorf("allowed model registry read carried no observation time, so the adapter did not answer")
+		}
+		count, err := queryMatrixInvocations(queryModelRegistryOperation)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return fmt.Errorf("the provider received %d model registry invocations, want exactly one", count)
 		}
 	case queryProjectCatalog:
 		if outcome.payloadSize == 0 {

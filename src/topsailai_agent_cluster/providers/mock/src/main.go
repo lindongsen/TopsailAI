@@ -597,8 +597,13 @@ var operationEvidenceTable = map[string]operationEvidence{
 	"agent.drive.start":   {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 	"agent.drive.stop":    {version: "v1", deliveryBoundary: "signal_sent", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"signal_sent"}`},
 	"agent.model.select":  {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
-	"command.exec":        {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
-	"workspace.clean":     {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	// agent.model.set declares payload schema version "1" for the same reason
+	// agent.model.select does: the Cluster intersects by name AND version, so a
+	// "v1" entry would be silently dropped and every set command refused as
+	// unsupported while the descriptor looked complete.
+	"agent.model.set": {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "submitted", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"command.exec":    {version: "1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
+	"workspace.clean": {version: "v1", deliveryBoundary: "submitted", effectCertainty: "acknowledged", providerOutcome: "succeeded", providerResponse: `{"outcome":"accepted","effect_certainty":"acknowledged","delivery_boundary":"submitted"}`},
 	// project.add and project.remove edit the provider's project registry entry
 	// only. They never create, modify or delete project data on disk, so the
 	// evidence reports a registry write rather than a filesystem effect.
@@ -869,6 +874,15 @@ func executeResponse(request request, fault string, mutationFile string) respons
 	case "project.add":
 		if request.Target != nil {
 			return failureResponse(request.RequestID, "invalid_request", "project.add must not carry a target", "not_applied")
+		}
+	// agent.model.set is the third target-less mutation: it declares which model a
+	// launch from this machine should use, so it addresses the machine and carries
+	// no resource. Requiring a target here would reject the only shape the Cluster
+	// contract defines for it, and the refusal would read as a provider defect
+	// rather than as a contract rule.
+	case "agent.model.set":
+		if request.Target != nil {
+			return failureResponse(request.RequestID, "invalid_request", "agent.model.set must not carry a target", "not_applied")
 		}
 	case "project.remove":
 		if request.Target == nil || request.Target.ResourceKind != resourceProject {

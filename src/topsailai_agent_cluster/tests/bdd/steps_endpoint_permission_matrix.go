@@ -40,6 +40,7 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a credential permitted to execute a command$`, grantCommandExec)
 	ctx.Step(`^a credential permitted to register a project$`, grantProjectAdd)
 	ctx.Step(`^a credential permitted to remove a project$`, grantProjectRemove)
+	ctx.Step(`^a credential permitted to set the machine model$`, grantModelSet)
 	ctx.Step(`^a credential permitted only to view$`, grantViewOnly)
 	ctx.Step(`^the message send command is submitted with that credential$`, submitMessageSend)
 	ctx.Step(`^the context inject command is submitted with that credential$`, submitContextInject)
@@ -54,6 +55,7 @@ func registerEndpointPermissionMatrixSteps(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the command exec operation is submitted with an allowlisted argv and that credential$`, submitCommandExec)
 	ctx.Step(`^the project add command is submitted with that credential$`, submitProjectAdd)
 	ctx.Step(`^the project remove command is submitted with that credential$`, submitProjectRemove)
+	ctx.Step(`^the agent model set command is submitted with that credential$`, submitModelSet)
 	ctx.Step(`^the command is accepted and the provider is invoked once$`, assertAcceptedAndInvokedOnce)
 	ctx.Step(`^the command is accepted and the endpoint ran it without the provider$`, assertAcceptedAndRanOnEndpoint)
 	ctx.Step(`^the command is refused with policy denied and the provider is not invoked$`, assertRefusedWithoutInvocation)
@@ -109,6 +111,13 @@ var permissionMatrixOperations = map[string]permissionMatrixOperation{
 	// check by kind: a session kind would address a process a registry entry does
 	// not have.
 	protocol.OperationProjectRemove: {Permission: protocol.OperationProjectRemove, Target: "", TargetKind: protocol.ResourceProject},
+	// agent.model.set carries no target, because it declares a machine-wide
+	// default rather than changing a running process. Its payload is computed at
+	// submit time rather than declared here: the identifier must be one this
+	// Endpoint minted, and the mapping only exists after a registry read, so a
+	// hardcoded profile ID would be refused as unknown before the policy hook and
+	// the negative scenario would pass for the wrong reason.
+	protocol.OperationAgentModelSet: {Permission: protocol.OperationAgentModelSet, Target: "", OperationVersion: protocol.ModelSetPayloadVersion, PayloadSchemaVersion: protocol.ModelSetPayloadVersion},
 }
 
 // permissionMatrixOperation describes one row of the command matrix.
@@ -194,6 +203,13 @@ func startPermissionMatrixCluster() error {
 			CapabilityVersions: map[string]string{
 				protocol.OperationCommandExec:      protocol.CommandExecPayloadVersion,
 				protocol.OperationAgentModelSelect: protocol.ModelSelectPayloadVersion,
+				// agent.model.set carries its own payload schema version, and the
+				// adapter intersects a capability by name AND version. Declaring
+				// the operation without its version would advertise it as "v1",
+				// so the intersection would drop it and every set command would be
+				// refused as unsupported before the policy hook ran. The positive
+				// row would then fail for a reason unrelated to authorization.
+				protocol.OperationAgentModelSet: protocol.ModelSetPayloadVersion,
 			},
 			CommandAllowlist: [][]string{permissionMatrixAllowlist},
 			// The project root is the only security boundary for project.add, so
@@ -263,6 +279,7 @@ func grantModelSelect() error        { return grantPermission(protocol.Operation
 func grantCommandExec() error        { return grantPermission(protocol.OperationCommandExec) }
 func grantProjectAdd() error         { return grantPermission(protocol.OperationProjectAdd) }
 func grantProjectRemove() error      { return grantPermission(protocol.OperationProjectRemove) }
+func grantModelSet() error           { return grantPermission(protocol.OperationAgentModelSet) }
 
 // grantViewOnly selects the token that holds an unrelated read scope, so the
 // credential is valid and the Endpoint refuses the operation under test for lack
@@ -443,6 +460,57 @@ func submitProjectRemove() error {
 	row.ProviderTarget = string(slot)
 	permissionMatrixOperations[protocol.OperationProjectRemove] = row
 	return submitPermissionMatrixOperation(protocol.OperationProjectRemove)
+}
+
+// matrixModelProfile reads the live model registry with the view credential and
+// returns the Cluster-minted profile identity of its first entry.
+//
+// The registry is read with the view token rather than with the row token,
+// because the row token holds only the control permission and the read would be
+// refused. Reading with the row token would make the positive scenario fail for a
+// reason unrelated to the operation under test.
+//
+// The identifier must come from this read rather than from the scenario, because
+// the Endpoint refuses a profile it never minted. A hardcoded identifier would be
+// refused as unknown_model_profile before the policy hook, so the negative
+// scenario would pass while proving nothing about authorization.
+func matrixModelProfile() (string, error) {
+	if activeScenario.world == nil || activeScenario.world.realCluster == nil {
+		return "", fmt.Errorf("real cluster is not running")
+	}
+	api := client.NewAPIClient(activeScenario.realCluster.URL(""), "secret")
+	api.AuthMode = security.ModeBearer
+	api.EndpointTokens = map[string]string{scopedEndpointID: permissionMatrixToken(security.ScopeView)}
+	registry, err := api.GetModelRegistry(context.Background(), scopedEndpointID)
+	if err != nil {
+		return "", fmt.Errorf("read model registry: %w", err)
+	}
+	if len(registry.Entries) == 0 {
+		return "", fmt.Errorf("model registry reported no entry, so the set row cannot address one")
+	}
+	entry := registry.Entries[0]
+	if entry.ModelProfileID == "" {
+		return "", fmt.Errorf("model registry row is incomplete: %+v", entry)
+	}
+	return entry.ModelProfileID, nil
+}
+
+// submitModelSet declares the machine-wide model using an identifier the
+// Endpoint minted.
+//
+// The payload is computed here rather than declared in the row table, because the
+// mapping only exists after a registry read. The row itself carries no target,
+// because the operation addresses the machine.
+func submitModelSet() error {
+	profileID, err := matrixModelProfile()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]string{"model_profile_id": profileID})
+	if err != nil {
+		return err
+	}
+	return submitPermissionMatrixOperationWithPayload(protocol.OperationAgentModelSet, string(payload))
 }
 func submitCommandExec() error { return submitPermissionMatrixOperation(protocol.OperationCommandExec) }
 

@@ -76,13 +76,42 @@ policy that fails to refuse it would not be caught by any test.
 
 ## Resolution
 
-Not yet fixed. Two scenarios are needed per operation, one allowing and one refusing, in the two
-feature files named by `permissionMatrixFeatureFiles`, plus the marker entries in
-`operationScenarioMarkers`. The marker must be a phrase that identifies the operation's own steps
-and cannot be satisfied by another operation's steps, and it must appear at least twice in the
-corpus because the guard requires both directions.
+Fixed. Both operations now have one allowing and one refusing scenario, and both markers are
+registered in `operationScenarioMarkers`.
 
-`agent.model.registry` is a read-only `view` query that addresses the machine, so its scenario
-belongs in `endpoint_query_permission_matrix.feature` beside the other query rows.
-`agent.model.set` is a mutating `control` operation, so its scenario belongs in
-`endpoint_permission_matrix.feature` beside the other command rows.
+`agent.model.registry` is a read-only `view` query that addresses the machine, so its scenario sits
+in `endpoint_query_permission_matrix.feature` beside the other query rows. `agent.model.set` is a
+mutating `control` operation, so its scenario sits in `endpoint_permission_matrix.feature` beside the
+other command rows.
+
+Four supporting changes were required, and each one is load-bearing rather than incidental:
+
+- The mock Provider had to advertise and answer `agent.model.set`. Without it the Endpoint drops the
+  capability at the intersection and the command is refused as unsupported before the policy hook, so
+  the refusal scenario would pass while proving nothing about authorization.
+- The mock's evidence entry declares version `"1"`, not `"v1"`. The Cluster intersects a capability by
+  name AND version, so a `"v1"` entry would be silently dropped and every set command refused as
+  unsupported while the descriptor still looked complete.
+- The harness capability list had to declare `agent.model.set`, for the same intersection reason.
+- The permission-matrix cluster had to declare the operation's own payload schema version through
+  `CapabilityVersions`. Declaring the operation without its version advertises it as `"v1"`, which the
+  intersection drops.
+
+The `agent.model.set` payload is computed at submit time from a live registry read rather than
+hardcoded, because the Endpoint refuses a profile it never minted. That read uses the **view** token,
+not the row token: the row token holds only `control`, so reading with it would be refused and the
+positive scenario would fail for a reason unrelated to the operation under test.
+
+### Evidence
+
+`make test-bdd` passes all six groups (`rehome-receipts`, `rehome-fallback`, `rehome`, `policy`,
+`lifecycle`, `surface`). `make test-unit` passes all 22 packages. `go build ./...` and
+`go vet ./tests/bdd/` are clean.
+
+The coverage has teeth, proven by breaking each guard in turn:
+
+| Guard broken | Result |
+|---|---|
+| The registry scenario removed from the feature file | `1 operation(s) have fewer than two scenarios, so one direction is unproven: [agent.model.registry (marker the model registry is read with the appears 0 time(s), want 2)]` |
+| The set refusal scenario removed | `1 operation(s) have fewer than two scenarios, so one direction is unproven: [agent.model.set (marker the agent model set command is submitted appears 1 time(s), want 2)]` |
+| The `agent.model.set` version declaration removed from `CapabilityVersions` | The positive scenario failed with `allowed command ended with error_code="unsupported"`, proving the intersection drops the capability and the scenario would otherwise have proven nothing |

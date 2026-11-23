@@ -16,6 +16,7 @@ var wantOperations = []string{
 	"agent.drive.start",
 	"agent.drive.stop",
 	"agent.model.select",
+	"agent.model.set",
 	"agent.resume",
 	"agent.start",
 	"agent.stop",
@@ -37,6 +38,7 @@ var wantOperations = []string{
 // a test that reads the table it verifies cannot detect a wrong entry.
 var wantVersions = map[string]string{
 	"agent.model.select": "1",
+	"agent.model.set":    "1",
 	"command.exec":       "1",
 }
 
@@ -68,15 +70,17 @@ func TestDescriptorAdvertisesEveryOperation(t *testing.T) {
 // the assumption the mock had to stop making when start began validating its own
 // target.
 //
-// project.add carries no target at all, because it addresses a resource that does
-// not exist yet. project.remove addresses a registry entry, so it names the
-// project resource kind and carries no generation. Returning a session target for
-// either would make this test assert a shape the contract forbids.
+// project.add and agent.model.set carry no target at all, because they address
+// the Endpoint rather than a resource on it: project.add creates a resource that
+// does not exist yet, and agent.model.set changes a machine-wide declaration.
+// project.remove addresses a registry entry, so it names the project resource
+// kind and carries no generation. Returning a session target for any of them
+// would make this test assert a shape the contract forbids.
 func executeTestTarget(operation string) *target {
 	switch operation {
 	case "agent.start":
 		return &target{ResourceKind: resourceLaunchProfile, ProviderResourceKey: "launch:mock", ExpectedGeneration: launchProfileRevision}
-	case "project.add":
+	case "project.add", "agent.model.set":
 		return nil
 	case "project.remove":
 		return &target{ResourceKind: resourceProject, ProviderResourceKey: "project:mock"}
