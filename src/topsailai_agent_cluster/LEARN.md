@@ -2161,3 +2161,54 @@ failure is silent in the direction that matters: an operator who copies the docu
 usage error, and the document that was supposed to prevent exactly that is the thing that caused it.
 This is the same class as recording a capability gap without checking the provider's real surface, but
 it runs the other way: there the gap was assumed, here the spelling was assumed.
+
+## A usage string that describes a different grammar than the parser implements
+
+Trigger: the `interrupt` usage error prints `usage: interrupt [soft|hard] [message]`, which reads as
+two positional slots. The parser implements one: `interrupt <endpoint> <resource> <text>
+<generation>`, where `<text>` is a single argument that must itself contain the action word and, for
+`soft`, the message. Following the usage text literally with
+`interrupt ep res soft "stop now"` puts the message in the generation slot, submits
+`{"action":"soft_interrupt"}` with no message, and fails with `target_generation_mismatch`. The
+operator's real mistake was an unquoted message; the reported cause is a generation mismatch, which
+sends the investigation to target identity and inventory.
+
+Action: when a usage or error string names positional slots, verify it against the code that assigns
+them by index, not against the help body or the examples. Here `action` reads `args[3]` as text and
+`args[4]` as generation (`src/main/agent-cluster-cli/main.go:1581-1648`), and the text-bearing family
+sets `positionalLimit = 5`, which is exactly the arity of the misleading invocation, so
+`rejectExtraPositionals` accepts it as well-formed. Then check whether the string is pinned by a test:
+two tests asserted this exact usage text (`internal/tui/interactive_test.go:584,668`), so the defect
+was certified rather than detected. Replace those assertions instead of adding new ones beside them.
+
+Why this prevents recurrence: a usage string is prose, so nothing type-checks it against the parser,
+and it is the one string an operator copies when they are already confused. The failure is silent in
+the direction that matters: the command is accepted, the payload is well-formed, and only the message
+is missing, which no error mentions. The wrong error code is worse than no error, because it names a
+cause the operator can act on and that cause is not the real one. Reading the index assignment is what
+turns "the usage text is wrong" into "the usage text teaches an invocation that cannot work".
+
+## A JSON payload form that skips the validation its plain form performs
+
+Trigger: `interrupt` accepts a JSON object as an advanced payload form and forwards it unchanged
+(`internal/tui/interactive_ops.go:419-424`), so `{"action":"nuke"}`,
+`{"action":"soft_interrupt","msg":"x"}` and `{}` all pass the local confirmation gate. The plain form
+rejects the same mistakes locally: an unknown action word is a usage error, and `hard` with a message
+is refused before submission. The Provider rejects all three JSON cases before any argv exists, so
+`effect_certainty` is `not_applied` and nothing runs; the cost is a wasted round trip and a
+confirmation prompt for a payload the CLI could have refused.
+
+Action: when a command accepts both a plain form and a JSON form, compare what each form validates
+before submission. A JSON form that only checks "is an object" is not validation, it is deferral. The
+project already contains the stronger pattern: `ctlPayload` rejects a non-object and
+`ctlPreflightAction` validates the action name against the advertised capabilities, so reuse that
+reasoning rather than inventing a second convention. Then check the empty-object case specifically,
+because it is where the two forms disagree about one intent: a bare `interrupt` submits
+`{"action":"hard_interrupt"}` as the documented default, while `interrupt ... '{}'` submits `{}` and
+is rejected.
+
+Why this prevents recurrence: the plain form is the one a human types, so it is the one that gets
+tested and hardened, while the JSON form is the one a script emits and nobody exercises by hand. Both
+are documented as the same command, so a caller reasonably expects the same validation. The failure is
+also safe, which is exactly why it survives: nothing bad happens, so no incident forces the
+comparison, and the only symptom is an error that arrives one layer later than it should.
