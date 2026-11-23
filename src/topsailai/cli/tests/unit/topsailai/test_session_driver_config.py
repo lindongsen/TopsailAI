@@ -147,3 +147,47 @@ def test_invalid_compiled_entry(installation):
     binary.chmod(0o600)
     with pytest.raises(ValueError, match="compiled entry must be executable"):
         resolve(installation)
+
+
+def test_compiled_installation_missing_entry_names_the_packaged_path(installation):
+    """A compiled install must not be told to install a source file it never ships."""
+    compiled_runtime = str(installation.package / "topsailai")
+    with pytest.raises(ValueError, match="compiled installation is missing the driver entry") as raised:
+        resolve(installation, package_dir=installation.package / "missing",
+                executable=compiled_runtime, base_executable="")
+    message = str(raised.value)
+    assert "session_agent_driver.py" not in message
+    assert "reinstall the package" in message
+
+
+def test_source_installation_missing_entry_keeps_source_guidance(installation):
+    """A source install still points at the source entry it actually ships."""
+    with pytest.raises(ValueError, match="install scripts/session_agent_driver") as raised:
+        resolve(installation, package_dir=installation.package / "missing")
+    assert "session_agent_driver.py" in str(raised.value)
+
+
+def test_compiled_installation_interpreter_error_names_the_real_cause(installation):
+    """A compiled runtime must not be blamed for a non-Python interpreter name."""
+    compiled_runtime = str(installation.package / "topsailai")
+    with pytest.raises(ValueError, match="compiled installation has no Python interpreter") as raised:
+        resolve(installation, executable=compiled_runtime, base_executable="")
+    message = str(raised.value)
+    assert "whose name starts with python" not in message
+    assert "compiled driver entry" in message
+
+
+def test_empty_runtime_keeps_the_generic_interpreter_guidance(installation):
+    """An absent runtime is not compiled evidence and keeps the generic message."""
+    with pytest.raises(ValueError, match="compatible Python interpreter") as raised:
+        resolve(installation, executable="", base_executable="")
+    assert "compiled installation" not in str(raised.value)
+
+
+def test_entry_override_error_does_not_blame_the_installation(installation):
+    """An invalid explicit override reports the override, not a missing package."""
+    with pytest.raises(ValueError, match=config.ENTRY_ENV) as raised:
+        resolve(installation, {config.ENTRY_ENV: "/missing-driver-override-fixture"})
+    message = str(raised.value)
+    assert "set this variable to an installed driver entry" in message
+    assert "reinstall the package" not in message
