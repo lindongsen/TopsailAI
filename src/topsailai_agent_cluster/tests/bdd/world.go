@@ -23,9 +23,9 @@ import (
 
 // Scenario contains isolated state shared by the steps of one scenario.
 type Scenario struct {
-	world             *World
-	lastStatus        int
-	lastBody          []byte
+	world      *World
+	lastStatus int
+	lastBody   []byte
 	// followChildPID is the pid the mock provider recorded for the follow child
 	// under test. It is captured before the keypress, because the record is the
 	// only evidence that a child existed at all: after the release the pid is gone

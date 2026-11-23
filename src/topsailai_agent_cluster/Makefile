@@ -140,7 +140,7 @@ DEB_SITE_ARGS = $(call deb_arg,--site,$(DEB_SITE)) \
 
 .DEFAULT_GOAL := build
 
-.PHONY: help build build-testhooks vet fmt \
+.PHONY: help build build-testhooks vet fmt fmt-check \
         test test-all test-unit test-unit-common test-unit-server \
         test-unit-endpoint test-unit-cli test-provider-schema test-conformance \
         test-provider-topsailai test-provider-topsailai-conformance \
@@ -165,7 +165,8 @@ help:
 	@echo ""
 	@echo "Verify"
 	@echo "  vet               run go vet over all packages"
-	@echo "  fmt               format Go sources in place"
+	@echo "  fmt               format every tracked Go file in place"
+	@echo "  fmt-check         fail when any tracked Go file is not gofmt-clean"
 	@echo ""
 	@echo "  Test by kind"
 	@echo "  test              run every untagged test (unit, harness, packaging, bdd)"
@@ -488,15 +489,34 @@ test-clean:
 	@echo "removed $(TEST_TMP_DIR) and $(BDD_BUILD_DIR)"
 
 # Full verification: every test kind, including the tagged integration suite.
-test-all: test-unit test-provider-schema test-conformance test-bdd test-integration test-packaging test-harness
+# fmt-check runs first because it is the cheapest check and a formatting
+# violation is a defect in the change, not a test failure to investigate.
+test-all: fmt-check test-unit test-provider-schema test-conformance test-bdd test-integration test-packaging test-harness
 
 # Kept as aliases because earlier plans and habits refer to these names.
 bdd: test-bdd
 
 integration: test-integration
 
+# Formatting covers every tracked Go file, not a hand-maintained path list. The
+# previous list named src, internal and the two provider src directories, so it
+# could never reach tests/ (75 files) or the provider conformance fixture, and a
+# non-compliant file there stayed non-compliant forever because no command could
+# fix it. git ls-files excludes .tmp by identity rather than by path, which
+# matters because the build writes generated cgo files under .tmp that must never
+# be reformatted.
 fmt:
-	gofmt -w src internal providers/mock/src providers/topsailai/src
+	@git ls-files -z '*.go' | xargs -0 -r gofmt -w
+
+# fmt-check fails when any tracked Go file is not gofmt-clean. Without it the
+# defect is invisible: gofmt -w silently fixes what it is pointed at, so a file
+# outside the path list looks compliant because nothing ever looked at it.
+fmt-check:
+	@out=$$(git ls-files -z '*.go' | xargs -0 -r gofmt -l); \
+	if [ -n "$$out" ]; then \
+		echo "not gofmt-clean:"; echo "$$out"; exit 1; \
+	fi; \
+	echo "gofmt: all tracked Go files are clean"
 
 # Builds one package. The builder derives the version from git when DEB_VERSION is
 # empty, so a package always identifies the commit it was built from.

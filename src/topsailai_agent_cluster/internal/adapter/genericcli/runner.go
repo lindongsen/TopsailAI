@@ -20,10 +20,10 @@ const processCleanupWait = 2 * time.Second
 
 // runnerConfig is local Endpoint configuration and is never populated from a request.
 type runnerConfig struct {
-	executable     string
-	args           []string
-	environment    []string
-	timeout        time.Duration
+	executable  string
+	args        []string
+	environment []string
+	timeout     time.Duration
 	// followTimeout bounds one streaming follow. It is separate from timeout
 	// because a follow's lifetime is decided by the operator, not by the
 	// one-shot call budget: sharing timeout ended every follow at the call

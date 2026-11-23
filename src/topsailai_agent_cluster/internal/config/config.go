@@ -159,7 +159,7 @@ type Config struct {
 	// configures nothing keeps the previous behaviour instead of an unbounded
 	// stream.
 	FollowTimeout time.Duration
-	Adapters       []AdapterConfig
+	Adapters      []AdapterConfig
 }
 
 // Channel direction values. The direction names which side dials, so a
