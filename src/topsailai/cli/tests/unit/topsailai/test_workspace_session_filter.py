@@ -184,7 +184,7 @@ def test_handler_forwards_the_selector_to_json(monkeypatch):
     )
 
     assert code == 0
-    printer.assert_called_once_with(include_completed=False, session_ids=["alpha"], local_only=False, include_runtime=False)
+    printer.assert_called_once_with(include_completed=False, session_ids=["alpha"], local_only=False, include_runtime=False, include_session_status=False)
 
 
 def test_handler_keeps_all_flag_with_a_selector(monkeypatch):

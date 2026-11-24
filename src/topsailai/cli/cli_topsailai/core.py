@@ -404,6 +404,7 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         return run_workspace_delete_task_records_cli(record_args)
     output_format = getattr(args, "format", None)
     include_runtime = bool(getattr(args, "include_runtime", False))
+    include_session_status = bool(getattr(args, "include_session_status", False))
     if workspace_command == "list" and getattr(args, "json", False):
         output_format = "json"
     # Runtime data has no table representation, so asking for it selects the
@@ -411,6 +412,10 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
     # therefore a request for the data, not a modifier of an already-chosen
     # format.
     if workspace_command == "list" and include_runtime:
+        output_format = "json"
+    # The lock state has no table column either, so the same rule applies: the
+    # flag requests data that only the JSON document can carry.
+    if workspace_command == "list" and include_session_status:
         output_format = "json"
     include_completed = bool(getattr(args, "all", False))
     local_only = bool(getattr(args, "local", False))
@@ -422,7 +427,7 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         print(
             f"{Colors.RED}[ERROR] Invalid session selector: {error}. "
             f"Usage: topsailai workspace list [-s ID1,ID2] [--local] [--json] "
-            f"[--include-runtime]{Colors.RESET}",
+            f"[--include-runtime] [--include-session-status]{Colors.RESET}",
             file=sys.stderr,
         )
         return 2
@@ -430,6 +435,7 @@ def _handle_workspace_subcommand(args: argparse.Namespace) -> int:
         _print_workspace_json(
             include_completed=include_completed, session_ids=session_ids,
             local_only=local_only, include_runtime=include_runtime,
+            include_session_status=include_session_status,
         )
     else:
         _print_workspace_table(
@@ -1511,12 +1517,21 @@ def _print_workspace_table(
 
 
 def _workspace_json_item(file_info: dict, index: int,
-                         runtime: Optional[dict] = None) -> dict:
+                         runtime: Optional[dict] = None,
+                         session_status: Optional[dict] = None) -> dict:
     """Build one stable JSON item with optional process-generation evidence.
 
     ``runtime`` is the row's collected runtime record, or ``None`` when the
     caller did not ask for it. The key is always present so the item schema
     never changes shape between invocations.
+
+    ``session_status`` is the row's collected lock-based session state, or
+    ``None`` when the caller did not ask for it. It is deliberately a separate
+    field from ``status``: ``status`` describes the agent process (``input``,
+    ``running``, ``idle``), while ``session_status`` describes the session lock
+    (``processing`` when a task holds the session, ``idle`` when it is free).
+    The two are independent, so neither may overwrite the other. The key is
+    always present so the item schema never changes shape between invocations.
     """
     from cli_topsailai.agent_launch_process import _process_identity
     from cli_topsailai.log_files import is_process_holding_file
@@ -1603,6 +1618,10 @@ def _workspace_json_item(file_info: dict, index: int,
         "pid": pid,
         "process_generation": generation,
         "status": status,
+        # The lock-based session state sits next to ``status`` so the two
+        # different meanings are read together: ``status`` is the agent
+        # process, ``session_status`` is the session lock.
+        "session_status": session_status,
         "completed": bool(file_info.get("workspace_completed", False)),
         "driver": driver,
         "created_at": created_at,
@@ -1643,6 +1662,7 @@ def _print_workspace_json(
     session_ids: Optional[List[str]] = None,
     local_only: bool = False,
     include_runtime: bool = False,
+    include_session_status: bool = False,
 ) -> None:
     """Print the workspace task list as one JSON document.
 
@@ -1653,6 +1673,15 @@ def _print_workspace_json(
     runtime data through its control channel; collection happens after every
     filter so a row that is not printed is never queried. Collection is best
     effort, so a failure leaves ``runtime`` null instead of failing the document.
+
+    ``include_session_status`` collects each retained row's lock-based session
+    state through the existing ``topsailai_session_status`` command. It answers a
+    different question than the row's ``status`` field: ``status`` reports what
+    the agent process is doing (``input``, ``running``, ``idle``), while
+    ``session_status`` reports whether a task currently holds the session
+    (``processing``) or the session is free (``idle``). Collection also runs
+    after every filter, and one session is queried once no matter how many rows
+    it has, because those rows share one lock.
     """
     from cli_topsailai.log_files import discover_workspace_log_files as discover_log_files
     from cli_topsailai.paths import get_topsailai_home
@@ -1683,9 +1712,23 @@ def _print_workspace_json(
             runtime_by_filename = collect_workspace_runtime(log_files, task_dir)
         except Exception:
             runtime_by_filename = {}
+    session_status_by_filename = {}
+    if include_session_status:
+        # Same placement and the same best-effort contract as runtime data: the
+        # lock state is an optional enrichment, so a collector failure leaves
+        # every row's ``session_status`` null rather than breaking the document.
+        try:
+            from cli_topsailai.workspace_session_status import (
+                collect_workspace_session_status,
+            )
+
+            session_status_by_filename = collect_workspace_session_status(log_files)
+        except Exception:
+            session_status_by_filename = {}
     items = [
         _workspace_json_item(
             file_info, index, runtime_by_filename.get(file_info.get("filename")),
+            session_status_by_filename.get(file_info.get("filename")),
         )
         for index, file_info in enumerate(log_files, start=1)
     ]
@@ -2036,6 +2079,19 @@ def main(argv: Optional[List[str]] = None) -> None:
         help=(
             "collect each row's runtime data through its control channel and "
             "add it to the JSON document; implies JSON output"
+        ),
+    )
+    workspace_list_parser.add_argument(
+        "--include-session-status",
+        action="store_true",
+        dest="include_session_status",
+        help=(
+            "collect each row's lock-based session state and add it as "
+            "session_status; 'processing' means a task currently holds the "
+            "session lock and 'idle' means the session is free. This is not the "
+            "row's status field, which reports the agent process as input, "
+            "running or idle. One session is queried once however many rows it "
+            "has; implies JSON output"
         ),
     )
     workspace_list_parser.set_defaults(func=_handle_workspace_subcommand)

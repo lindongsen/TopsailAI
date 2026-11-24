@@ -233,5 +233,5 @@ def test_completed_filter_and_json_fields_are_unchanged(tmp_path, monkeypatch):
         "no", "filename", "session_name", "session_id", "is_task",
         "session_qualifier", "pid", "process_generation", "status",
         "completed", "driver", "created_at", "project_workspace", "hostname",
-        "metafile", "last_stats", "runtime",
+        "metafile", "last_stats", "runtime", "session_status",
     }

@@ -492,7 +492,7 @@ def test_include_runtime_is_absent_from_the_parser_by_default(monkeypatch):
     assert raised.value.code == 0
     printer.assert_called_once_with(
         include_completed=False, session_ids=None, local_only=False,
-        include_runtime=False,
+        include_runtime=False, include_session_status=False,
     )
 
 

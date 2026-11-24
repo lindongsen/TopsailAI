@@ -40,3 +40,20 @@ Consequences that must be preserved:
 3. `sys.executable` names the compiled CLI binary rather than an interpreter, so it is not a usable
    interpreter candidate in a compiled install. An absent runtime candidate is not evidence of a
    compiled install and keeps the generic interpreter guidance.
+
+## Reuse existing commands and their data instead of reimplementing detection
+
+Directed by the human on 2026-11-24 while adding `--include-session-status` to `workspace list`.
+
+1. **Reuse the existing implementation.** When a capability already exists, call it. Do not write a
+   second implementation of the same detection logic. For the session lock state the existing
+   implementation is the `topsailai_session_status` command, which wraps
+   `topsailai.workspace.lock_tool.ctxm_try_session_lock`; a new caller must go through that command
+   rather than opening lock files itself.
+2. **Call the command, do not study the mechanism.** The human's instruction is to invoke the
+   existing command line and treat its output as the contract. Re-deriving how the lock is probed is
+   out of scope for a caller and creates a second source of truth that will drift.
+3. **Reuse data already fetched.** One invocation must query a given session at most once. Cache the
+   result per session identity for the lifetime of the command and reuse it for every row that
+   belongs to that session, because several rows of one session share one lock and repeated calls
+   are pure waste.

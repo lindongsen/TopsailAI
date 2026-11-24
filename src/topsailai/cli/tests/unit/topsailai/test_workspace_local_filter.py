@@ -192,7 +192,7 @@ def test_handler_forwards_the_flag_to_json(monkeypatch):
     assert code == 0
     printer.assert_called_once_with(
         include_completed=False, session_ids=None, local_only=True,
-        include_runtime=False,
+        include_runtime=False, include_session_status=False,
     )
 
 
