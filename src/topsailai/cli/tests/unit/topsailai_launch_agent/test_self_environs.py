@@ -122,8 +122,9 @@ class TestSelfEnvironsViaMain(unittest.TestCase):
 
             self.assertEqual(cm.exception.code, 0)
             stdout_output = self._stdout.getvalue()
-            # The dry-run "Environment variables (merged from base and item)"
-            # section only lists base/item env keys; self_environs is absent.
+            # The dry-run "Environment variables (merged from base, item and
+            # caller)" section only lists base/item/caller env keys;
+            # self_environs is absent.
             self.assertNotIn("MY_INITIAL=loaded", stdout_output)
 
 

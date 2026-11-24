@@ -111,7 +111,7 @@ def _launched_env_section(output):
     TOPSAILAI_AGENT_DRIVER, so environment assertions must be scoped to the
     section that reports what the child actually receives.
     """
-    marker = "Environment variables (merged from base and item):"
+    marker = "Environment variables (merged from base, item and caller):"
     if marker not in output:
         raise AssertionError(
             f"missing dry-run environment section\n--- output ---\n{output}"

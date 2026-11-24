@@ -52,6 +52,7 @@ import time
 # DONOT REMOVE THIS
 import readline
 from cli_topsailai.env_compat import get_env
+from cli_topsailai.launch_parameters import LaunchParameterError, parse_env_overrides
 
 PWD = os.getenv("TOPSAILAI_PWD")
 if PWD:
@@ -2334,6 +2335,20 @@ def main():
         help="Use this validated session identifier for the launched agent.",
     )
     parser.add_argument(
+        "--env",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        dest="env_overrides",
+        help=(
+            "Set one environment variable for the launched driver. May be "
+            "repeated. These values are applied after the base and item "
+            "sections of settings.yaml, so a caller-supplied value wins over "
+            "the project configuration. The identity aliases are rejected "
+            "because --session-id owns them."
+        ),
+    )
+    parser.add_argument(
         "--task",
         default=None,
         metavar="MESSAGE",
@@ -2458,6 +2473,10 @@ def main():
     args = parser.parse_args()
     if args.session_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", args.session_id):
         parser.error("--session-id must be a safe session identifier")
+    try:
+        env_overrides = parse_env_overrides(args.env_overrides)
+    except LaunchParameterError as error:
+        parser.error(str(error))
     if args.task is not None and not args.task.strip():
         parser.error("--task must contain a non-whitespace message")
     # --non-interactive promises that no prompt is ever shown, so reject the
@@ -2706,7 +2725,10 @@ def main():
         context_content = ""
     else:
         context_content = _read_context_blocks(normalized_context, workspace)
-    # 3. Assemble environment variables: system env <- base <- item (latter overrides former)
+    # 3. Assemble environment variables: system env <- base <- item <- caller
+    # (each later source overrides the former). A caller-supplied value is
+    # applied last so it is deterministic regardless of the target project's
+    # settings.yaml, which is the whole point of the --env option.
     base_env = _get_base_env(env_map)
     item_env = env_map.get(item_name, {}) if not _is_base_item(item_name) else {}
 
@@ -2715,11 +2737,19 @@ def main():
     merged_env = os.environ.copy()
     merged_env.update(base_env)
     merged_env.update(item_env)
+    merged_env.update(env_overrides)
     # Keep the child environment consistent with the driver actually launched.
     # Without this, an interactive override would start the chosen driver while
     # the child still advertised the overridden TOPSAILAI_AGENT_DRIVER value.
+    # The driver override is the one value that outranks a caller-supplied one,
+    # because the child must describe the driver that is really running.
     if selection.driver_override:
         merged_env["TOPSAILAI_AGENT_DRIVER"] = selection.driver_override
+    if "TOPSAILAI_AGENT_DRIVER" in env_overrides:
+        # A caller may name this variable, but the child must advertise the
+        # driver that is really running, so the resolved driver wins over the
+        # caller's value instead of letting the child describe another driver.
+        merged_env["TOPSAILAI_AGENT_DRIVER"] = ai_agent_driver
     session_id = _ensure_session_id(merged_env)
     if args.session_id is not None:
         session_id = args.session_id
@@ -2864,12 +2894,18 @@ def main():
                     print(f"  [file] {source.value}")
         else:
             print("  (none)")
-        print("\nEnvironment variables (merged from base and item):")
-        config_env_keys = set(base_env) | set(item_env)
+        print("\nEnvironment variables (merged from base, item and caller):")
+        config_env_keys = set(base_env) | set(item_env) | set(env_overrides)
         if args.task is not None:
             config_env_keys.add("TOPSAILAI_TASK")
         for key in sorted(config_env_keys):
-            value = "<configured>" if key == "TOPSAILAI_TASK" else merged_env.get(key, "")
+            if key == "TOPSAILAI_TASK" or key in env_overrides:
+                # A caller-supplied value is redacted like the task text: the
+                # preview names what will be set without disclosing a value the
+                # caller may have supplied as a credential.
+                value = "<configured>"
+            else:
+                value = merged_env.get(key, "")
             print(f"  {key}={value}")
         sys.exit(0)
 

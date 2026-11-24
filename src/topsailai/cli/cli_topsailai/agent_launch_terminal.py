@@ -538,12 +538,15 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
                     driver: Optional[str] = None,
                     launcher_driver: Optional[str] = None,
                     non_interactive: bool = False,
-                    task: Optional[str] = None) -> dict[str, Any]:
+                    task: Optional[str] = None,
+                    env_overrides: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """Submit one detached terminal-container supervisor and await its record.
 
     *launcher_driver* selects the driver the fresh launcher itself runs, so it
     is forwarded as the launcher's own ``--driver`` flag and settings.yaml
-    context injection still happens.
+    context injection still happens. *env_overrides* are forwarded to the
+    launcher as ``--env`` flags so a caller-supplied value outranks the target
+    project's settings.yaml.
     """
     from cli_topsailai import agent_launch_background as bg
 
@@ -574,6 +577,8 @@ def submit_terminal(folder: str, session_id: str, *, mechanism: str,
             request["non_interactive"] = True
         if task is not None:
             request["task"] = task
+        if env_overrides:
+            request["env_overrides"] = dict(env_overrides)
         if environment is not None:
             request["environment"] = dict(environment)
         write_request(attempt.request_path, request)

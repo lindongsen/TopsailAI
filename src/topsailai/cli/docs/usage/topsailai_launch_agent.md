@@ -80,6 +80,8 @@ topsailai_launch_agent
 | `--task <message>` | Supply the initial user task through the existing `TOPSAILAI_TASK` startup channel so the agent starts without waiting for manual task input. The selected driver still determines whether the process runs one turn or continues interactively. |
 | `--no-base-context` | Ignore the shared base context sources configured under `context._` (and the legacy `context._default`), and skip the automatic workspace instruction files (`AGENTS.md`, `LEARN.md`, `MEMORY.md`). Only the selected item's own context sources are injected. Base environment variables are still merged. |
 | `--driver <command>` | Override the `ai_agent_driver` value. |
+| `--session-id <id>` | Use this validated session identifier for the launched agent instead of generating one. The value must match `[A-Za-z0-9_.-]{1,128}`. |
+| `--env KEY=VALUE` | Set one environment variable for the launched driver. May be repeated. Applied after the base and item sections of `settings.yaml`, so a caller-supplied value wins over the project configuration. `TOPSAILAI_SESSION_ID` and `SESSION_ID` are rejected because `--session-id` owns them. |
 | `--select-driver` | Open the interactive agent-driver menu before launching, even when the context-item page is not shown. The chosen driver overrides `--driver` and every `settings.yaml` source for this run. Ignored with a warning when stdin is not a terminal. |
 | `--dry-run` | Print the resolved command, working directory, and merged environment variables without executing. |
 | `--subprocess` | Use `subprocess.run()` instead of `os.system()` (default). |
@@ -354,8 +356,11 @@ Environment variables are merged in this order, with later sources taking preced
 2. `_` — the base configuration shared by all items.
 3. `_default` — legacy backward compatibility.
 4. Item-specific values.
+5. `--env KEY=VALUE` supplied by the caller on the command line.
 
 Context sources are read in the same order: `_` first, then `_default` for legacy compatibility, then item-specific sources.
+
+`TOPSAILAI_AGENT_DRIVER` is the one value a caller cannot override through `--env`: the launcher always sets it to the driver it actually runs, because the child must advertise the driver that is really running. Every other name supplied through `--env` wins over the project configuration. An empty value is preserved rather than treated as unset, a malformed entry or an invalid variable name is a usage error, and a repeated name with a different value is rejected instead of silently keeping one of them.
 
 ## Launch Pipeline
 

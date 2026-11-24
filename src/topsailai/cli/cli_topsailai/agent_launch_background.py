@@ -552,6 +552,7 @@ def _supervise(request: Mapping[str, Any], ack_fd: int, *, popen: Optional[Calla
             non_interactive=bool(request.get("non_interactive")),
             task=request.get("task"),
             launcher_driver=request.get("launcher_driver"),
+            env_overrides=request.get("env_overrides"),
         )
         child_environment = dict(request.get("environment") or _os.environ)
         child = popen(command, cwd=str(request["folder"]), env=child_environment,
@@ -881,7 +882,8 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
                       driver: Optional[str] = None,
                       launcher_driver: Optional[str] = None,
                       non_interactive: bool = False,
-                      task: Optional[str] = None) -> dict[str, Any]:
+                      task: Optional[str] = None,
+                      env_overrides: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """Submit a detached supervisor and return its acknowledged launch record.
 
     *log_identity* selects the per-attempt log name while *session_id* remains
@@ -892,7 +894,9 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
     *non_interactive* is forwarded to
     the supervisor so the launcher it spawns never prompts; it does not change
     the agent's own ``TOPSAILAI_INTERACTIVE_MODE``. *task* is forwarded only to
-    a fresh launcher as its first user task.
+    a fresh launcher as its first user task. *env_overrides* are forwarded to
+    the launcher as ``--env`` flags so a caller-supplied value outranks the
+    target project's settings.yaml.
     """
     _validate_resume_driver(driver)
     task_dir = Path(get_topsailai_home()) / "workspace" / "task"
@@ -920,6 +924,8 @@ def launch_background(folder: str, session_id: str, *, environment: Optional[Map
             request["non_interactive"] = True
         if task is not None:
             request["task"] = task
+        if env_overrides:
+            request["env_overrides"] = dict(env_overrides)
         request_path, _ = _request_file(Path(folder), request)
         read_fd, write_fd = _os.pipe()
         cancel_read_fd, cancel_write_fd = _os.pipe()

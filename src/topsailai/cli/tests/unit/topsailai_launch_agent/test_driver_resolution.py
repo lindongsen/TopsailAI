@@ -88,7 +88,7 @@ class TestAgentDriverResolution(unittest.TestCase):
     def _command_line_section(self, output):
         """Return only the 'Command line:' section from dry-run output."""
         marker = "\nCommand line:\n"
-        env_marker = "\nEnvironment variables (merged from base and item):"
+        env_marker = "\nEnvironment variables (merged from base, item and caller):"
         start = output.find(marker)
         if start == -1:
             return ""

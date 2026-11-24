@@ -303,7 +303,8 @@ def test_workspace_agent_help_contract(capsys):
     print_help([], "workspace", keyword="workspace agent")
     output = capsys.readouterr().out
     assert ("topsailai workspace agent [<folder>] [-m MODE] [-b|--background] "
-            "[--task MESSAGE] [--non-interactive] [--driver DRIVER] [--json]") in output
+            "[--task MESSAGE] [--non-interactive] [--driver DRIVER] "
+            "[--session-id ID] [--env KEY=VALUE] [--json]") in output
     assert "The folder is optional and defaults to the caller's working directory" in output
     assert "--task supplies the initial user task" in output
     assert "task is not included in JSON receipts or status output" in output
@@ -314,10 +315,16 @@ def test_workspace_agent_help_contract(capsys):
     assert "keeping settings.yaml context injection" in output
     assert "forwarded to the launcher as --driver rather than replacing the launcher command" in output
     assert "receipt carries driver only when --driver was given" in output
+    assert "--session-id fixes the launched session identity instead of minting one" in output
+    assert "must not contain a dot" in output
+    assert "error_code identity_conflict" in output
+    assert "--env KEY=VALUE supplies one launch environment value that outranks settings.yaml" in output
+    assert "the identity aliases are rejected because --session-id owns them" in output
+    assert "the receipt publishes the overridden names without their values" in output
     for text in (
         "2 usage failure",
         "3 invalid folder",
-        "4 preparation failure including an unavailable background mechanism",
+        "4 preparation failure including an unavailable background mechanism or a refused caller-fixed identity",
         "5 spawn/wait failure",
         "6 unresolved custody",
         "130 cancellation",
@@ -339,13 +346,14 @@ def test_b24_background_contract_snapshot_and_scale(capsys, tmp_path):
     # Syntax, exit codes, retention, no-attach and JSON receipts are documented.
     for text in (
         ("topsailai workspace agent [<folder>] [-m MODE] [-b|--background] "
-         "[--task MESSAGE] [--non-interactive] [--driver DRIVER] [--json]"),
+         "[--task MESSAGE] [--non-interactive] [--driver DRIVER] "
+         "[--session-id ID] [--env KEY=VALUE] [--json]"),
         "Background defaults to raw mode",
         "honors an explicit -m raw|tmux|dtach",
         "failing closed when that mechanism is unavailable",
         "2 usage failure",
         "3 invalid folder",
-        "4 preparation failure including an unavailable background mechanism",
+        "4 preparation failure including an unavailable background mechanism or a refused caller-fixed identity",
         "5 spawn/wait failure",
         "6 unresolved custody",
         "130 cancellation",

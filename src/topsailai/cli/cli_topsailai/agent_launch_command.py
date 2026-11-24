@@ -7,7 +7,7 @@ silently missing from the other.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Mapping, Optional
 
 _LAUNCHER = "topsailai_launch_agent"
 
@@ -15,7 +15,8 @@ _LAUNCHER = "topsailai_launch_agent"
 def launcher_command(session_id: str, *, driver: Optional[str] = None,
                      non_interactive: bool = False,
                      task: Optional[str] = None,
-                     launcher_driver: Optional[str] = None) -> list[str]:
+                     launcher_driver: Optional[str] = None,
+                     env_overrides: Optional[Mapping[str, str]] = None) -> list[str]:
     """Build the launcher argv for one fresh launch or resume.
 
     A resume driver is a different executable, so it never receives launcher
@@ -29,6 +30,12 @@ def launcher_command(session_id: str, *, driver: Optional[str] = None,
     ``--driver`` flag. The launcher still resolves settings.yaml, merges the
     configured environment and injects context, which is exactly what a fresh
     launch needs; passing it as ``driver`` would replace the whole argv instead.
+
+    ``env_overrides`` are forwarded as repeated ``--env KEY=VALUE`` flags rather
+    than through this process's environment, because the launcher merges
+    settings.yaml over its inherited environment. Only the launcher's own flag
+    can outrank a configured value, so a caller-supplied value must travel as
+    argv. Names are emitted in sorted order so the argv is reproducible.
     """
     if driver:
         return [driver]
@@ -39,4 +46,6 @@ def launcher_command(session_id: str, *, driver: Optional[str] = None,
         command.extend(["--driver", launcher_driver])
     if task is not None:
         command.extend(["--task", task])
+    for name in sorted(env_overrides or {}):
+        command.extend(["--env", f"{name}={env_overrides[name]}"])
     return command

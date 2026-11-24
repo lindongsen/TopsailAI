@@ -100,11 +100,15 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
                             child_stdout=None,
                             non_interactive: bool = False,
                             task: str | None = None,
+                            env_overrides: dict[str, str] | None = None,
                             enable_session_tee: bool = True) -> int:
     """Launch an agent and make restoration failure observable.
 
-    When *session_id* is supplied the launch resumes that persisted identity
-    instead of minting a fresh one, and *driver* selects the resume driver.
+    *session_id* fixes the identity of the launch. Two cases share it and must
+    not be confused: with *driver* the launch resumes that persisted identity,
+    and without *driver* it starts a fresh session under a caller-chosen
+    identity. The receipt fact ``resumed`` therefore reports the resume case
+    only, because a caller-fixed fresh launch is not a resume.
 
     *launcher_driver* selects the driver the fresh launcher itself runs, so it
     is forwarded as the launcher's own ``--driver`` flag and settings.yaml
@@ -116,6 +120,11 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
     remains controlled by ``TOPSAILAI_INTERACTIVE_MODE`` and is not modified.
     *task* supplies the first user task to a fresh launcher without adding it to
     receipts or status output.
+
+    *env_overrides* are caller-supplied environment values for the launched
+    agent. They travel to the launcher as ``--env`` flags so they outrank the
+    target project's settings.yaml, which the launcher merges over its inherited
+    environment.
 
     *prelaunch_check* is an optional late revalidation invoked after
     preparation and immediately before the child is spawned or the supervisor
@@ -151,6 +160,8 @@ def launch_configured_agent(folder: str, *, mode: str | None, background: bool =
             launch_kwargs["non_interactive"] = True
         if task is not None:
             launch_kwargs["task"] = task
+        if env_overrides:
+            launch_kwargs["env_overrides"] = dict(env_overrides)
         if not enable_session_tee:
             launch_kwargs["enable_session_tee"] = False
         result = _launch_configured_agent_impl(folder, **launch_kwargs)
@@ -184,6 +195,7 @@ def _launch_configured_agent_impl(
     child_stdout=None,
     non_interactive: bool = False,
     task: str | None = None,
+    env_overrides: dict[str, str] | None = None,
     enable_session_tee: bool = True,
 ) -> int:
     """Launch one configured agent and return its boundary status."""
@@ -200,17 +212,21 @@ def _launch_configured_agent_impl(
         if prelaunch_check is None:
             return None
         return prelaunch_check()
-    # A resume keeps the persisted identity; a fresh launch mints a new one.
-    resumed_session = session_id
+    # A supplied identity is either a resume (a resume driver replaced the
+    # launcher argv) or a caller-fixed fresh launch. Only the first is a resume,
+    # so the receipt fact is derived from the driver rather than from the mere
+    # presence of an identity.
+    fixed_session = session_id
+    resumed = fixed_session is not None and driver is not None
     child = None
     result = 4
     # The detached supervisor entry point is resolved against the caller's
     # invocation directory, which is captured before any folder change.
     invocation_cwd = entrypoint_base or os.getcwd()
     try:
-        session_id = resumed_session or _session_id()
+        session_id = fixed_session or _session_id()
         record(session_id=session_id, workspace=folder, background=background,
-               resumed=resumed_session is not None)
+               resumed=resumed)
         try:
             effective_mode = (mode or "raw") if background else (mode or _detect_agent_mode())
         except (RuntimeError, ValueError, OSError) as error:
@@ -258,11 +274,14 @@ def _launch_configured_agent_impl(
                 "environment": os.environ.copy(),
                 "spawn": spawn,
                 "entrypoint_base": invocation_cwd,
-                # A resume writes a distinct per-attempt log so an earlier
-                # attempt's diagnostics are never truncated; a fresh launch
-                # keeps its historical single log name.
+                # A fixed identity writes a distinct per-attempt log so an
+                # earlier attempt's diagnostics are never truncated and a
+                # relaunch under the same name cannot collide with the
+                # exclusive create of the previous attempt's log. A minted
+                # identity is unique per launch, so it keeps its historical
+                # single log name.
                 "log_identity": (launch_log_identity(session_id, uuid.uuid4().hex)
-                                 if resumed_session else None),
+                                 if fixed_session else None),
                 "driver": driver,
                 "non_interactive": non_interactive,
             }
@@ -270,6 +289,8 @@ def _launch_configured_agent_impl(
                 submit_kwargs["launcher_driver"] = launcher_driver
             if task is not None:
                 submit_kwargs["task"] = task
+            if env_overrides:
+                submit_kwargs["env_overrides"] = dict(env_overrides)
             record(submission_attempted=True)
             try:
                 if effective_mode == "raw":
@@ -313,7 +334,8 @@ def _launch_configured_agent_impl(
         )
         command = launcher_command(session_id, driver=driver,
                                    non_interactive=non_interactive, task=task,
-                                   launcher_driver=launcher_driver)
+                                   launcher_driver=launcher_driver,
+                                   env_overrides=env_overrides)
         try:
             forwarded = _prepare_environment(folder, session_id)[3]
             if enable_session_tee:

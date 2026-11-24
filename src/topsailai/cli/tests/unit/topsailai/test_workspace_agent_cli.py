@@ -666,3 +666,242 @@ def test_terminal_request_carries_the_selected_driver(tmp_path):
     assert written["launcher_driver"] == "topsailai_agent_chat"
     assert written["non_interactive"] is True
     assert written["task"] == "t"
+
+
+def test_session_id_option_is_forwarded_to_the_launch(tmp_path):
+    """A caller-fixed identity reaches the launch boundary unchanged."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.process_liveness.session_liveness", return_value="idle"), \
+         patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--session-id", "bot-weixin"]) == 0
+    kwargs = launch.call_args.kwargs
+    assert kwargs["session_id"] == "bot-weixin"
+    assert callable(kwargs["prelaunch_check"])
+
+
+def test_absent_session_id_option_keeps_the_historical_call_shape(tmp_path):
+    """An omitted --session-id must not add identity keywords."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([str(folder)]) == 0
+    kwargs = launch.call_args.kwargs
+    assert "session_id" not in kwargs
+    assert "prelaunch_check" not in kwargs
+
+
+@pytest.mark.parametrize("identity", ["bad.id", "bad/id", "bad id", ""])
+def test_unusable_session_id_is_rejected_before_any_launch(tmp_path, capsys, identity):
+    """A dotted or malformed identity never reaches a filename."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--session-id", identity]) == 2
+    assert launch.call_count == 0
+    assert capsys.readouterr().err
+
+
+def test_unusable_session_id_emits_a_usage_error_receipt(tmp_path, capsys):
+    """The JSON path reports the rejection as a parseable document."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--json", "--session-id", "bad.id"]) == 2
+    assert launch.call_count == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["ok"] is False
+    assert receipt["error_code"] == "usage_error"
+
+
+def test_env_option_is_forwarded_to_the_launch(tmp_path):
+    """Caller-supplied environment values reach the launch boundary."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--env", "A=1", "--env", "B=two"]) == 0
+    assert launch.call_args.kwargs["env_overrides"] == {"A": "1", "B": "two"}
+
+
+def test_absent_env_option_keeps_the_historical_call_shape(tmp_path):
+    """An omitted --env must not add an empty override mapping."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", return_value=0) as launch:
+        assert run_workspace_agent_cli([str(folder)]) == 0
+    assert "env_overrides" not in launch.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    "entry", ["NOEQUALS", "=value", "1BAD=x", "TOPSAILAI_SESSION_ID=other", "SESSION_ID=other"],
+)
+def test_unusable_env_entry_is_rejected_before_any_launch(tmp_path, capsys, entry):
+    """A malformed or identity-bearing --env entry never reaches the launcher."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli([str(folder), "--env", entry]) == 2
+    assert launch.call_count == 0
+    assert capsys.readouterr().err
+
+
+def test_conflicting_env_repeat_is_rejected_before_any_launch(tmp_path, capsys):
+    """Two different values for one name cannot both be honored."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--env", "A=1", "--env", "A=2"]) == 2
+    assert launch.call_count == 0
+    assert "conflicting" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("state", ["live", "unknown"])
+def test_unreusable_identity_is_refused_with_exit_four(tmp_path, capsys, state):
+    """A live or unverifiable identity is refused instead of being reused."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.process_liveness.session_liveness", return_value=state), \
+         patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--session-id", "bot-weixin"]) == 4
+    assert launch.call_count == 0
+    assert "refused" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("state", ["live", "unknown"])
+def test_unreusable_identity_receipt_names_the_conflict(tmp_path, capsys, state):
+    """The JSON refusal is a parseable document naming the conflict."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    with patch("cli_topsailai.process_liveness.session_liveness", return_value=state), \
+         patch("cli_topsailai.agent_launch.launch_configured_agent") as launch:
+        assert run_workspace_agent_cli(
+            [str(folder), "--json", "--session-id", "bot-weixin"]) == 4
+    assert launch.call_count == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["ok"] is False
+    assert receipt["error_code"] == "identity_conflict"
+    assert receipt["session_id"] == "bot-weixin"
+
+
+def test_late_identity_conflict_is_reported_as_a_conflict(tmp_path, capsys):
+    """A session that starts between preparation and spawn is still refused."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    states = iter(["idle", "live"])
+
+    def launch(_folder, **kwargs):
+        assert kwargs["prelaunch_check"]() == 4
+        kwargs["receipt"].update(identity_conflict="Session bot-weixin is already running")
+        return 4
+
+    with patch("cli_topsailai.process_liveness.session_liveness",
+               side_effect=lambda _id: next(states)), \
+         patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli(
+            [str(folder), "--json", "--session-id", "bot-weixin"]) == 4
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["error_code"] == "identity_conflict"
+
+
+def test_receipt_publishes_the_honored_identity_and_env_names(tmp_path, capsys):
+    """The receipt names the effective identity and never discloses a value."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            session_id="bot-weixin", workspace=str(folder), mode="raw",
+            background=False, resumed=False, launcher_pid=321,
+            startup_confirmed=False, child_exit_code=0,
+            launcher_exit_observed=True,
+        )
+        return 0
+
+    with patch("cli_topsailai.process_liveness.session_liveness", return_value="idle"), \
+         patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli(
+            [str(folder), "--json", "--session-id", "bot-weixin",
+             "--env", "SECRET_TOKEN=s3cr3t"]) == 0
+    captured = capsys.readouterr().out
+    receipt = json.loads(captured)
+    assert receipt["session_id"] == "bot-weixin"
+    assert receipt["response"]["env_overrides"] == ["SECRET_TOKEN"]
+    assert "s3cr3t" not in captured
+
+
+def test_receipt_omits_env_overrides_when_none_were_supplied(tmp_path, capsys):
+    """A launch without overrides keeps the historical receipt shape."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    def launch(_folder, **kwargs):
+        kwargs["receipt"].update(
+            session_id="s", workspace=str(folder), mode="raw", background=False,
+            resumed=False, launcher_pid=1, startup_confirmed=False,
+            child_exit_code=0, launcher_exit_observed=True,
+        )
+        return 0
+
+    with patch("cli_topsailai.agent_launch.launch_configured_agent", side_effect=launch):
+        assert run_workspace_agent_cli([str(folder), "--json"]) == 0
+    assert "env_overrides" not in json.loads(capsys.readouterr().out)["response"]
+
+
+def test_fixed_identity_launcher_argv_carries_identity_and_env(tmp_path):
+    """The real launcher argv carries the identity and every --env pair."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    child = _StatusChild(returncode=0)
+    calls = []
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="minted"):
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", session_id="bot-weixin",
+            env_overrides={"A": "1", "B": "two"},
+            spawn=lambda argv, **kwargs: calls.append(argv) or child,
+        ) == 0
+    assert calls[0] == [
+        "topsailai_launch_agent", "--subprocess", "--session-id", "bot-weixin",
+        "--env", "A=1", "--env", "B=two",
+    ]
+
+
+def test_fixed_identity_fresh_launch_is_not_reported_as_resumed(tmp_path):
+    """A caller-fixed fresh launch is not a resume."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    child = _StatusChild(returncode=0)
+    facts = {}
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="minted"):
+        assert launch_configured_agent(
+            str(tmp_path), mode="raw", session_id="bot-weixin",
+            receipt=facts, spawn=lambda *a, **k: child,
+        ) == 0
+    assert facts["session_id"] == "bot-weixin"
+    assert facts["resumed"] is False
+
+
+def test_prelaunch_check_refuses_before_the_child_is_spawned(tmp_path):
+    """The late revalidation runs before any process exists."""
+    from cli_topsailai.agent_launch import launch_configured_agent
+
+    spawned = []
+    with patch("cli_topsailai.agent_launch._apply_selected_model_environment",
+               side_effect=lambda _: ({}, set())), \
+         patch("cli_topsailai.agent_launch._session_id", return_value="minted"):
+        code = launch_configured_agent(
+            str(tmp_path), mode="raw", session_id="bot-weixin",
+            prelaunch_check=lambda: 4,
+            spawn=lambda *a, **k: spawned.append(a) or _StatusChild(returncode=0),
+        )
+    assert code == 4
+    assert spawned == []
