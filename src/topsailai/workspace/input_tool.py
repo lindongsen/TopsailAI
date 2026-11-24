@@ -443,6 +443,11 @@ def input_yes(tips: str = "Continue [yes/no] ") -> bool:
         >>> print(should_continue)
         True
     """
+    from topsailai.hooks.points.workspace.before_input_yes import (
+        hook__workspace__before__input_yes,
+    )
+
+    hook__workspace__before__input_yes(tips=tips)
     return utils_input_tool.input_yes_or_no(tips, input_func=input_one_line)
 
 
