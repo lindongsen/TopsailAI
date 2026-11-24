@@ -11,6 +11,20 @@ from topsailai.hooks.points.workspace.before_input_message import (
     NAME, hook__workspace__before__input_message,
 )
 
+BUNDLED_MODULES = ("run_hook_scripts.py",)
+
+
+def fixture_handlers(result):
+    """Select the scenario's own Modules, excluding permanent bundled members.
+
+    Bundled Modules are discovered from the real point folder, so a scenario
+    that asserts about its own fixture files must locate them by identity
+    instead of assuming a fixed position in the handler list.
+    """
+    modules = [item for item in result.handlers
+               if item.handler.kind == "module" and item.handler.name not in BUNDLED_MODULES]
+    return modules, result.handlers[-1]
+
 
 @pytest.fixture
 def result_case(tmp_path, monkeypatch):
@@ -62,8 +76,9 @@ def normal(result_case):
     assert result_case.caught is None
     result = result_case.result
     assert result.status == "success"
-    first, later, terminal = result.handlers
-    assert [item.handler.name for item in result.handlers] == ["a_result.py", "z_result.py", "hook_script"]
+    modules, terminal = fixture_handlers(result)
+    first, later = modules
+    assert [item.handler.name for item in modules] == ["a_result.py", "z_result.py"]
     for handler in (first, later):
         assert handler.status == "success" and handler.error is None
         assert handler.returned.present
@@ -78,7 +93,8 @@ def exceptional(result_case):
     assert result_case.caught is None
     result = result_case.result
     assert result.status == "completed_with_errors"
-    first, later, terminal = result.handlers
+    modules, terminal = fixture_handlers(result)
+    first, later = modules
     assert first.status == "error" and not first.returned.present
     assert first.not_run_reason is None
     assert first.error.category == "error"

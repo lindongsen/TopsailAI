@@ -27,9 +27,22 @@ def configuration(monkeypatch):
     monkeypatch.setattr(point_entry, "_cleanup_records", {})
 
 
+BUNDLED_MODULES = ("run_hook_scripts.py",)
+
+
 def entries(result):
     """Flatten shared envelopes for existing execution-behavior assertions."""
     return result.handlers[:-1] + result.handlers[-1].children
+
+
+def fixture_entries(result):
+    """Select only fixture resources, excluding permanent bundled members.
+
+    Bundled Modules are discovered from the real point folder, so a test that
+    asserts about its own fixture files must locate them by identity instead of
+    assuming a fixed position in the handler list.
+    """
+    return [item for item in entries(result) if item.handler.name not in BUNDLED_MODULES]
 
 
 def module(path, output, text, extra=""):
@@ -91,7 +104,7 @@ def test_file_lists_failure_and_bad_executable(tmp_path):
     good = script(tmp_path / "z", output, "ok")
     hooks.initialize_hook_points({NAME: {"scripts": [str(good), str(bad)]}})
     result = hooks.invoke_hook_point(NAME)
-    assert [item.status for item in entries(result)] == ["error", "success"]
+    assert [item.status for item in fixture_entries(result)] == ["error", "success"]
     assert output.read_text() == "ok"
 
 
@@ -114,7 +127,7 @@ def test_expired_deadline_skips_successor_after_inprocess_module(tmp_path):
     later = script(tmp_path / "z", marker, "NO")
     points = decode_points({NAME: {"modules": str(slow), "scripts": str(later)}})
     result = execute_point(NAME, points, payload={}, timeout_seconds=0.5)
-    assert [item.status for item in entries(result)] == ["success", "not_run"]
+    assert [item.status for item in fixture_entries(result)] == ["success", "not_run"]
     assert not marker.exists()
     assert int(output.read_text()) == os.getpid()
 
@@ -156,7 +169,7 @@ def test_module_failure_and_skipped_directory(tmp_path):
     module(tmp_path / "nested" / "no.py", output, "NO")
     (tmp_path / "__init__.py").write_text("raise RuntimeError('not a member')")
     hooks.initialize_hook_points({NAME: {"modules": str(tmp_path)}})
-    assert [r.status for r in entries(hooks.invoke_hook_point(NAME))] == ["error", "success"]
+    assert [r.status for r in fixture_entries(hooks.invoke_hook_point(NAME))] == ["error", "success"]
     assert output.read_text() == "ok"
 
 
@@ -194,7 +207,7 @@ def test_cleanup_failure_stops_successors(tmp_path, monkeypatch):
 
     monkeypatch.setattr(point_entry, "_cleanup", settled_but_failed)
     points = decode_points({NAME: {"scripts": [str(later), str(first)]}})
-    assert [r.status for r in entries(execute_point(NAME, points, payload={}))] == ["error", "not_run"]
+    assert [r.status for r in fixture_entries(execute_point(NAME, points, payload={}))] == ["error", "not_run"]
     assert output.read_text() == "a"
 
 
