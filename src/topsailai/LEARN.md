@@ -280,6 +280,12 @@ Action: locate the expected handler by its stable identity before asserting its 
 
 Why this prevents recurrence: bundled Hook resources can expand without changing the configured plugin contract, so identity-based assertions verify the intended resource and do not fail merely because another valid handler is inserted earlier.
 
+Recurrence on 2026-11-24: adding the bundled `before_input_message/modules/run_hook_scripts.py` broke 8 pre-existing tests in two files, all of them asserting an exact handler list or unpacking a fixed 3-tuple. The earlier entry was already in this file and did not prevent it, because it described how to write a new assertion rather than what to check before adding a bundled resource.
+
+Action (extended): before adding any file to a point's `modules/` or `scripts/` folder, grep the test tree for exact handler-list assertions and fixed-arity unpacking of `result.handlers`, and convert each one to identity-based selection in the same logical unit. `_discover()` always merges the internal folder with configured selections, so a bundled member is a permanent participant in every invocation of that point, including tests that configure only their own fixtures.
+
+Why the extended step matters: the failure is invisible in the new tests, which pass because they assert about the new resource. Only the pre-existing files that assert about their own fixtures fail, and they fail with a list that is one element longer than expected — a symptom that reads as an executor defect rather than a test-scoping defect. Selecting by identity also keeps the assertion meaningful: it still proves the fixture Modules ran in name order, which a length-only or prefix-only fix would stop proving.
+
 ## Hoisting a statement across a conditional boundary is a behaviour change, not a refactor
 
 Trigger: while adding a post-answer persistence guard, `self.last_message = answer` was moved out of an enclosing `if answer:` block so the recovery branch could restore the answer after a failed write. The pre-existing sibling test `test_run_with_agent_end_process_exception` then failed with `'' != {'role': 'assistant', 'content': 'Last message'}`: with an empty answer the unconditional assignment overwrote the message that the `AgentEndProcess` branch had just stored.
