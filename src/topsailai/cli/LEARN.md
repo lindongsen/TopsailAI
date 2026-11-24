@@ -1252,3 +1252,36 @@ the consumer, because a passing source-tree test proves nothing about the shippe
 build. Also sweep the whole tree for the pattern instead of fixing the one
 reported line: four other cross-script imports had the same defect and were
 latent crashes waiting for their own command to be run.
+
+## A seam that replaces a whole collaborator hides that collaborator's input contract
+
+### Trigger
+
+`workspace kill --graceful` passed all 24 unit tests, then failed on its first
+real run with `graceful_delivery_failed` / `usage_error`. The cause was a type
+mismatch at a boundary the tests had stubbed out: `deliver_graceful_exit` passed
+`task_dir` as a `str`, while `runtime_target._absolute_path` requires
+`isinstance(path, Path) and path.is_absolute()` and raises `usage_error`
+otherwise. Every real delivery was rejected before any target was resolved.
+
+### Action taken
+
+Normalized the directory to an absolute `Path` inside `deliver_graceful_exit`,
+hoisted the single `RuntimeRequest` construction out of the duplicated branches,
+and documented in the docstring why the normalization happens there. Added two
+regression tests that assert the executor receives a `Path` that `is_absolute()`,
+including the relative-directory case, and proved them sensitive by restoring the
+`str` form: exactly those two went red while the other 24 stayed green.
+
+### Why this prevents recurrence
+
+A seam that replaces a whole collaborator also replaces that collaborator's
+requirements, so the test proves the caller's intent and never the boundary's
+contract. The seam must sit *inside* the boundary it stands for, or the test must
+assert the shape the real implementation demands — here, the type of the argument
+the real executor receives. The general rule: when a test injects a fake for a
+function that has its own input validation, assert the argument's type and shape
+at the seam, because a passing suite otherwise certifies a call the real function
+would reject. A live end-to-end run is the only check that catches this class of
+defect, which is why the manual verification script is part of the unit, not an
+optional extra.
