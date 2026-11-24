@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 ---
 
 # `drive status` advertises three identifier forms but resolves only a cluster resource ID
@@ -47,3 +47,26 @@ resolver capabilities.
 Either resolve the provider session ID in `drive status` by matching the persisted inventory row, or
 narrow the `drive status` help entry to the identifier it actually accepts. The second is smaller and
 honest; the first is better for the operator, because it makes the three subcommands agree.
+
+## Resolution
+
+Fixed by the first option: `drive status` now resolves the provider session ID.
+
+`resolveDriveSession` searches the cluster resource ID namespace first and the
+provider session ID namespace second, mirroring the existing
+`findInfoSession`/`matchInfoSession` pattern. The resource ID keeps precedence
+because it is the routing identity, so a token that is both keeps its routing
+meaning. Several matches inside one endpoint are refused with the count and the
+remedy rather than resolved to the first row, because one provider session can own
+several rows and silently choosing one would report a different row's controller.
+An empty provider session ID never matches, because an unverified row carries no
+identifier to match against.
+
+The `drive` help entry was rewritten to state the real asymmetry: `status` accepts
+either identifier, while `start` and `stop` still require the cluster resource ID
+because they address a live process and must carry a generation. Verified live:
+`--yes drive start ac.ai-dev 20261123131848 gen-x` returns
+`target_not_found` / `not_applied`, so nothing was started.
+
+Verified live: `drive status ac.ai-dev 20261123131848` exits 0 and reports
+`session: res_50da448edfd53f9b19032af9354c290e`, `drive_state: none`.

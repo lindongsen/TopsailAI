@@ -1,7 +1,7 @@
 ---
 maintainer: AI
 author: DawsonLin
-status: open
+status: done
 ---
 
 # `logs` advertises `-n` but the standalone surface registers only `--lines`
@@ -42,3 +42,21 @@ for the standalone parser. A test that asserts the help text passes, and a test 
 Register `n` as an alias of `lines` in `src/main/agent-cluster-cli/main.go`, reconciling the two
 spellings the way `-c`/`--max-chars` already are, and add a test that drives the real binary with
 `-n` rather than asserting the help text.
+
+## Resolution
+
+Fixed. `-n` is registered as a separate flag beside `--lines` and reconciled by
+`reconcileLines`, which uses the parser's explicit-set record because `--lines`
+defaults to 100 and a value comparison cannot tell "not supplied" from "supplied
+the default". `resolveInteractiveLines` also treats `-n` as explicit.
+
+A second defect was found while fixing this one: `"n"` was missing from
+`globalOptionNames`, so a trailing `-n` was hoisted without its value and the bound
+became a positional. That is recorded separately in
+`logs-trailing-n-is-hoisted-without-its-value.md`.
+
+The help syntax line, the pinned copy in `help_scope_test.go` and
+`docs/cli-command-surface-rules.md` now all name both spellings.
+
+Verified live: `logs ac.ai-dev res_50da... -n 3` exits 0 with real output, and
+`-n 3 --lines 5` exits 2 with `--lines 5 and -n 3 disagree; state the bound once`.

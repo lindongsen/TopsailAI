@@ -366,9 +366,25 @@ func nonInteractiveHelpEntry(name string) commandHelp {
 		entry.parameters = []string{"endpoint: endpoint ID", "resource: opaque session/resource ID from the persisted inventory", "generation: optional expected generation; omit it for an expired session whose liveness is unverified", "--yes: required confirmation for this destructive operation", "--json: write the structured receipt instead of the rendered one"}
 		entry.examples = []string{"--yes clean endpoint-1 res_abc", "--yes clean endpoint-1 res_abc gen-1"}
 	case "drive":
+		// The standalone form has no rendered table and no current session, so it
+		// states both mandatory arguments and never accepts a row number: a row
+		// number only exists after an interactive render. It also states the
+		// confirmation and generation requirements, because a mutating drive
+		// action refuses without them and the interactive body does not mention
+		// either.
 		entry.syntax = "agent-cluster-cli [options] drive <start|stop|status> <endpoint> <session> [generation]"
+		entry.description = "manage the resident driver of one session; a driver injects input on the operator's behalf and is not the agent, so drive stop leaves the agent running"
+		entry.parameters = []string{"start: start a driver for the target session; the driver runs autonomously, so it is mutating and requires --yes and a generation", "stop: stop only the driver controller; the agent keeps running, and the action requires --yes and a generation", "status: report the standard drive state from the persisted inventory; it never probes the provider, so it takes no generation", "endpoint: endpoint ID", "session: opaque session/resource ID from the persisted inventory; drive status also accepts the provider session ID, because a status read addresses persisted data rather than a live process", "generation: required for start and stop, and rejected for status", "--json: write the structured document instead of the rendered one"}
+		entry.examples = []string{"drive status endpoint-1 res_abc", "drive status endpoint-1 20261013131753", "--yes drive start endpoint-1 res_abc gen-1", "--yes drive stop endpoint-1 res_abc gen-1"}
 	case "logs":
-		entry.syntax = "agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>"
+		// The standalone form has no rendered table and no current session, so it
+		// states both mandatory arguments and never accepts a row number. The
+		// inherited interactive body advertised a row number, a current-session
+		// default and a rejected --json, and all three are false here.
+		entry.syntax = "agent-cluster-cli [options] [-n <lines>] [--lines <lines>] [--follow] logs <endpoint> <session>"
+		entry.description = "show bounded output for one session, or stream it until the process is interrupted"
+		entry.parameters = []string{"endpoint: endpoint ID", "session: opaque session/resource ID from the persisted inventory; a row number is not accepted, because a row number only exists after an interactive render", "-n N (or --lines N): maximum number of trailing output lines; defaults to 100, and stating both spellings with different values is refused instead of resolved by precedence", "-f (or --follow): stream new output records until the process is interrupted; an interrupt is a normal stop, not a failure", "--max-bytes N: bound one followed record; an oversized record is truncated and labelled rather than ending the stream", "logf: shorthand for logs -f, so follow is implied and needs no flag; every other argument is accepted unchanged, and a repeated follow flag is still rejected", "--json: write the snapshot document instead of the rendered text; a failed read exits non-zero instead of printing an empty document"}
+		entry.examples = []string{"logs endpoint-1 res_abc", "logs endpoint-1 res_abc -n 50", "logs endpoint-1 res_abc --lines 50", "logs endpoint-1 res_abc --follow", "logs endpoint-1 res_abc -f -n 20"}
 	case "show":
 		entry.syntax = "agent-cluster-cli [options] show <endpoint-or-session>"
 	case "info":

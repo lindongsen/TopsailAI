@@ -362,7 +362,7 @@ func TestNonInteractiveHelpCatalogMatchesStandaloneDispatch(t *testing.T) {
 		"agent-cluster-cli [options] [--endpoint <id>] list [--clean] [-a|--all]",
 		"agent-cluster-cli [options] [--endpoint <id>] refresh",
 		"agent-cluster-cli [options] show <endpoint-or-session>",
-		"agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>",
+		"agent-cluster-cli [options] [-n <lines>] [--lines <lines>] [--follow] logs <endpoint> <session>",
 		"agent-cluster-cli [options] status <command-id>",
 		"agent-cluster-cli [options] send <endpoint> <resource> [text] [generation]",
 		"agent-cluster-cli [options] btw <endpoint> <resource> [text] [generation]",

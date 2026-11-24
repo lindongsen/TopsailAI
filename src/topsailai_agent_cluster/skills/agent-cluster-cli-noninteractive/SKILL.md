@@ -72,10 +72,9 @@ ac.ai-dev	res_50da448edfd53f9b19032af9354c290e	20261123131848	636422598
 agent-cluster-cli --json messages ac.ai-dev 20261123131848 -c 2000 2>/dev/null \
   | jq -r '.messages[-2:][] | "--- #\(.no) \(.role) ---\n\(.content)"'
 
-# 3. Recent output: the CLUSTER resource ID, and the flag is --lines, never -n
-#    Fail loudly on error_code, because this read exits 0 even when it failed.
-agent-cluster-cli --lines 50 --json logs ac.ai-dev res_50da448edfd53f9b19032af9354c290e 2>/dev/null \
-  | jq -r 'if (.error_code // "") != "" then "logs failed: \(.error_code)" | halt_error(1) else .data end'
+# 3. Recent output: the CLUSTER resource ID; -n and --lines are the same bound
+agent-cluster-cli --json logs ac.ai-dev res_50da448edfd53f9b19032af9354c290e -n 50 2>/dev/null \
+  | jq -r '.data'
 ```
 
 | Read | Accepts | Rejects |
@@ -88,12 +87,11 @@ The two mismatches do **not** fail the same way, and the difference decides whet
 | Mismatch | Human output | `--json` output | Exit |
 |---|---|---|---|
 | `messages` given a cluster resource ID | `server request failed (400): invalid_target: ...` on stderr | nothing on stdout | `2` |
-| `logs` given a provider session ID | `output snapshot failed: unknown_resource` on stderr | `{"data":"","truncated":false,"observed_at_ms":0,"error_code":"unknown_resource"}` | `2` human, **`0` with `--json`** |
+| `logs` given a provider session ID | `output snapshot failed: unknown_resource` on stderr | nothing on stdout | `2` |
 
-So `logs` with the wrong identifier is the dangerous case: under `--json` it exits `0` and prints a
-document whose `data` is empty. A script that only checks the exit status reads that as "the agent
-produced no output", which is a plausible and wrong conclusion. Always check `error_code` in the
-`--json` document, and treat a non-empty `error_code` as a failure whatever the exit status was.
+Both forms now fail the same way, because one shared guard performs the read and the check before
+either renderer runs. A script may therefore trust the exit status for `logs`, and `--json` never
+prints a document describing a read that failed.
 
 The reason the two reads take opposite identifiers is deliberate: `messages` reads persisted provider
 data, which a stopped session still has and which is keyed by the provider's own identifier, while
@@ -150,14 +148,14 @@ literal data. `exec` keeps its own `--` because the terminator is part of its sy
 | `endpoints` | `endpoints [endpoint-id]` | Registered endpoints with connection state, observation time and capability revision. Never forces discovery |
 | `show` | `show <endpoint-or-session>` | Endpoint or session detail; returns `{capabilities, command_history, endpoint, inventory, session}` |
 | `info` | `info <session-id>` | Session detail including the provider's own `provider_metadata` and `provider_runtime` documents |
-| `logs` | `logs <endpoint> <session> [--lines N] [--follow]` | Bounded output snapshot, or a live tail with `--follow` |
+| `logs` | `logs <endpoint> <session> [-n N\|--lines N] [-f\|--follow]` | Bounded output snapshot, or a live tail with `--follow`; `-n` and `--lines` are one bound |
 | `history` | `history <endpoint-id-or-hostname> [--limit N]` | Live provider session history, never a persisted projection |
 | `messages` | `messages <endpoint> <session-id> [-c N] [-t N]` | Persisted conversation; a stopped session can still be read. The session must be a provider session ID, not a cluster resource ID |
 | `project` | `project <endpoint>` | Managed projects as standard Project resources; a live provider read |
 | `model registry` | `model registry <endpoint>` | Models a launch from this endpoint can use, with the one in use marked |
 | `model` | `model <endpoint> <session> [profile]` | Model profiles one session can select. This is a live provider query and can fail with `provider_error` |
 | `status` | `status <command-id>` | Durable result of a submitted command |
-| `drive status` | `drive status <endpoint> <session>` | Standard drive state from the persisted inventory; never probes the provider; takes no generation |
+| `drive status` | `drive status <endpoint> <session>` | Standard drive state from the persisted inventory; never probes the provider; takes no generation; accepts a cluster resource ID or a provider session ID |
 
 ### Action commands
 
@@ -260,15 +258,14 @@ reporting an error.
 - **`stop` requires a generation positionally**; `clean` does not, because an expired session
   may have no verified liveness.
 - **`drive status` takes no generation** and refuses one.
-- **`drive status` resolves only a cluster resource ID, despite its help.** `help drive` advertises
-  "session/resource ID, provider session ID, or a bare list row number", but `drive status` looks the
-  session up by resource ID only, so `drive status ep 20261123131848` reports
-  `session "20261123131848" was not reported by endpoint "ep"`. Use the cluster resource ID from
-  `--json list`, or run `drive status` inside the REPL where a row number resolves.
-- **`logs` takes `--lines`, and `-n` is not registered standalone.** `help logs` advertises
-  `-n, --lines`, but only `--lines` is registered on the standalone surface, so `-n 3` fails with
-  `flag provided but not defined: -n` and `logs ep res -n 3` is read as a positional and reports
-  `usage: logs <endpoint-id> <session-id>`. Use `--lines 3`. `-n` works only inside the REPL.
+- **`drive status` accepts a cluster resource ID or a provider session ID.** The resource ID
+  namespace is searched first, so a token that is both keeps its routing meaning; a provider session
+  ID that matches several rows is refused with the count and the remedy rather than resolved to the
+  first. `drive start` and `drive stop` still require the cluster resource ID, because they address a
+  live process and must carry a generation.
+- **`-n` and `--lines` are the same bound on both surfaces.** `logs ep res -n 3` works standalone.
+  Stating both with different values is refused with `--lines 5 and -n 3 disagree; state the bound
+  once`, because either choice would silently ignore a bound the operator stated.
 - **`resume` accepts either `-s <session-id>` or a positional resource ID, never both.** In the
   `-s` form the generation must be stated with `--generation`, because the positional slot
   belongs to the resource ID.
@@ -320,15 +317,15 @@ Three failure classes exist, and the difference decides what a script must do:
 |---|---|---|---|
 | **Receipt rejection** | `0` | `resume` on a live session → `status: rejected`, `error_code: target_still_active` | The command reached the Endpoint and was refused. The receipt is the authority |
 | **Local or transport failure** | `2` | `show no-such-endpoint` → `endpoint or session "..." was not found`; `info res_doesnotexist` → `session "..." was not found on any endpoint`; `status cmd_doesnotexist` → `server request failed (404): not_found` | The command never produced a receipt. Nothing was submitted |
-| **Read failure inside a `--json` document** | `0` | `--json logs ep <provider-session-id>` → `{"data":"","error_code":"unknown_resource"}` | The read failed, but the failure is reported in the document rather than the exit status |
+| **Read failure** | `2` | `--json logs ep <provider-session-id>` → stderr `output snapshot failed: unknown_resource`, stdout empty | The read failed. One shared guard performs the read and the check before either renderer runs, so the human and `--json` forms fail identically |
 
 Consequences you must respect:
 
 - Never treat exit `0` as proof that an action happened. Read `status` and `error_code`.
   Verified example: `resume` on a live session exits `0` with `status: rejected`,
   `error_code: target_still_active`, `effect_certainty: not_applied`.
-- Never treat an empty `data` field as "nothing to report". A `--json` read can exit `0` while carrying
-  `error_code: unknown_resource`, so check `error_code` before believing an empty result.
+- A `--json` read that fails exits `2` and prints nothing on stdout, so an empty `data` field now
+  means the read succeeded and the provider had nothing to show.
 - Never treat exit `2` as proof that the command was malformed. A not-found target also exits `2`,
   so read the message before concluding that the syntax was wrong.
 - A usage error exits `2` and writes the reason to stderr, so a script can distinguish "the
@@ -384,9 +381,10 @@ token that cannot be signed is reported as a local configuration error before an
   only the provider session ID, because a stopped session has no cluster resource ID.
 - **Using a provider session ID where a cluster resource ID is required.** `logs` accepts only the
   cluster resource ID, so `logs ep 20261123131848` fails with
-  `output snapshot failed: unknown_resource`. Under `--json` that same failure exits **`0`** and
-  prints `{"data":"","error_code":"unknown_resource"}`, so a script that trusts the exit status reads
-  it as an empty result. The two reads take opposite identifiers; see "The Daily Workflow" above.
+  `output snapshot failed: unknown_resource` and exits `2` in both the human and `--json` forms.
+  `drive status` is the exception among the drive actions: it also accepts a provider session ID,
+  because it reads persisted data rather than addressing a live process. The two reads take opposite
+  identifiers; see "The Daily Workflow" above.
 - **Treating `model <endpoint> <session>` as always available.** It is a live provider query and
   can fail with `provider_error`; `model registry` is the machine-level read and is the safer
   probe.

@@ -24,6 +24,15 @@ type driveStatusView struct {
 // never admits a command, so an unverified record is never presented as a live
 // controller. A missing summary is reported as not observed rather than as an
 // empty or stopped controller, because the provider simply reported nothing.
+//
+// The identifier is resolved in two namespaces, because the help entry advertises
+// both and the interactive surface already accepts both. A cluster resource ID
+// keeps precedence, matching findInfoSession: the resource ID is the routing
+// identity, so it must win when the two namespaces collide. A provider session ID
+// is accepted as the fallback, because an operator reading a provider record has
+// that identifier and not the cluster one. Several matches inside one endpoint are
+// an error rather than an arbitrary pick, because one provider session can own
+// several rows and silently choosing one would report a different row's controller.
 func (r CommandRunner) DriveStatus(ctx context.Context, out io.Writer, endpointID, resourceID string, jsonMode bool) error {
 	report, err := r.API.GetInventory(ctx, endpointID)
 	if err != nil {
@@ -32,17 +41,62 @@ func (r CommandRunner) DriveStatus(ctx context.Context, out io.Writer, endpointI
 	if !report.ReportComplete {
 		return fmt.Errorf("endpoint %q inventory is incomplete; drive state is unknown", endpointID)
 	}
-	for _, session := range report.Sessions {
-		if session.ClusterSessionID != resourceID {
+	session, err := resolveDriveSession(report.Sessions, resourceID, endpointID)
+	if err != nil {
+		return err
+	}
+	view := driveStatusView{EndpointID: endpointID, ClusterSessionID: session.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, ObservedAtMS: session.ObservedAtMS, Drive: session.Drive}
+	if jsonMode {
+		return RenderJSON(out, view)
+	}
+	return renderDriveStatus(out, view)
+}
+
+// resolveDriveSession resolves one identifier against one endpoint's reported
+// sessions. The cluster resource ID namespace is searched first and the provider
+// session ID namespace second, so the routing identity always wins a collision.
+// The endpoint is a parameter rather than a caller-side wrapper because every
+// message names it, and a wrapper would have to restate the sentence around an
+// error it does not understand.
+func resolveDriveSession(sessions []protocol.Session, id, endpointID string) (protocol.Session, error) {
+	if session, matches := matchDriveSession(sessions, id, true); matches > 0 {
+		if matches > 1 {
+			return protocol.Session{}, fmt.Errorf("resource ID %q matches %d sessions on endpoint %q; use the provider session ID to select one", id, matches, endpointID)
+		}
+		return session, nil
+	}
+	if session, matches := matchDriveSession(sessions, id, false); matches > 0 {
+		if matches > 1 {
+			return protocol.Session{}, fmt.Errorf("provider session %q matches %d sessions on endpoint %q; use the cluster resource ID to select one", id, matches, endpointID)
+		}
+		return session, nil
+	}
+	return protocol.Session{}, fmt.Errorf("session %q was not reported by endpoint %q", id, endpointID)
+}
+
+// matchDriveSession counts matches in one identifier namespace and returns the
+// first one. byResourceID selects the cluster resource ID namespace; otherwise the
+// provider session ID namespace is searched. An empty provider session ID never
+// matches, because an unverified row carries no identifier to match against.
+func matchDriveSession(sessions []protocol.Session, id string, byResourceID bool) (protocol.Session, int) {
+	var (
+		found   protocol.Session
+		matches int
+	)
+	for _, session := range sessions {
+		matched := session.ClusterSessionID == id
+		if !byResourceID {
+			matched = session.ProviderSessionID != "" && session.ProviderSessionID == id
+		}
+		if !matched {
 			continue
 		}
-		view := driveStatusView{EndpointID: endpointID, ClusterSessionID: session.ClusterSessionID, ProviderGeneration: session.ProviderGeneration, ObservedAtMS: session.ObservedAtMS, Drive: session.Drive}
-		if jsonMode {
-			return RenderJSON(out, view)
+		if matches == 0 {
+			found = session
 		}
-		return renderDriveStatus(out, view)
+		matches++
 	}
-	return fmt.Errorf("session %q was not reported by endpoint %q", resourceID, endpointID)
+	return found, matches
 }
 
 // detailLine is one label/value pair of a human-readable detail render.
