@@ -115,3 +115,54 @@ Not yet decided; recorded for the human to choose.
 Direction 1 changes one budget and one code. Direction 2 adds reconnect state to a stream the protocol
 currently treats as one bounded request. Direction 3 is the smallest change and fixes only the
 diagnosis.
+
+## Resolution
+
+Resolved by `efbca422` ("fix: bound a follow by its own budget and report expiry as
+follow_timeout"), which implements candidate direction 1. Verified on the deployed build
+`f721174e`, which contains that commit.
+
+### What changed
+
+- A follow is bounded by `FollowTimeout`, not by the one-shot call `Timeout`. `budgetFor`
+  (`internal/adapter/genericcli/adapter.go:841-853`) returns `FollowTimeout` for
+  `follow_output` only; every other function keeps the one-shot budget, because a command or a
+  read must not occupy a slot for as long as an operator happens to watch a tail.
+- The default is 30 minutes (`internal/config/config.go:190`), configurable through
+  `AGENT_CLUSTER_ENDPOINT_FOLLOW_TIMEOUT` or `--follow-timeout`
+  (`internal/config/config.go:381,488`). A zero value falls back to the Adapter call timeout, so
+  an Endpoint that configures nothing keeps the previous behaviour rather than an unbounded
+  stream.
+- Expiry is reported as `follow_timeout`, distinct from `cancelled`, at both layers that can
+  observe it: `internal/endpoint/follow.go:118,125,132` and
+  `providers/topsailai/src/follow.go:113-114`. `cancelled` now means only that a consumer
+  stopped the stream, which is the distinction the "Why the message is misleading" section
+  asked for.
+
+### Verification
+
+The deployed `node.conf` sets no `FOLLOW_*` key and the running Endpoint passes no
+`--follow-timeout` flag, so the 30-minute default is in force.
+
+A live follow against `ac.ai-dev` outlived the previous 120-second bound:
+
+```text
+agent-cluster-cli logf ac.ai-dev res_50da448edfd53f9b19032af9354c290e
+exit=124 elapsed=150s bytes=82132
+(no "follow ended" line: the stream was still running when the harness stopped it)
+```
+
+The stream produced no self-termination line and no follow failure was logged during that
+window. The last `cancelled: context deadline exceeded` entry in
+`/opt/agent-cluster/logs/endpoint/ac.topsail.log` is `2026-11-20T21:17:58`, before the deployed
+build; no `follow_timeout` entry exists because no follow has yet reached the new 30-minute
+bound.
+
+### Remaining gap
+
+The 30-minute lifetime is verified manually, not pinned by an automated test. The budget
+selection is covered indirectly by the adapter tests, but no test asserts the end-to-end
+lifetime. A future change that reintroduced the shared budget would be caught by
+`TestStartFollowReportsBudgetExpiryAsFollowTimeout`
+(`internal/endpoint/follow_provider_code_test.go`), which pins the code rather than the
+duration.
