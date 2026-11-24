@@ -195,3 +195,60 @@ func TestNonPolicyFailureIsUnchanged(t *testing.T) {
 		t.Fatalf("unrelated failure was annotated: %v", err)
 	}
 }
+
+// TestCredentialRejectionNamesTheMissingLocalToken verifies that an
+// authentication refusal on a machine with no configured token is explained
+// locally.
+//
+// The Endpoint answers `credential_rejected` when no credential arrives, and it
+// cannot distinguish a caller that forgot to configure a token from one that
+// deliberately presented none. Guarding the explanation on the policy code alone
+// therefore left this case unexplained, and the operator read a message about the
+// Endpoint's own authentication while the real cause was their own token map.
+func TestCredentialRejectionNamesTheMissingLocalToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"code":"credential_rejected","message":"operation output.read was refused: the endpoint could not authenticate the presented credential"}`)
+	}))
+	defer server.Close()
+
+	api := newBearerClient(server.URL, "server-token")
+	_, err := api.GetHistory(context.Background(), "gd-dev", 5)
+	if err == nil {
+		t.Fatal("GetHistory succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), endpointTokensEnvName) {
+		t.Fatalf("refusal did not name the local configuration: %v", err)
+	}
+	if !strings.Contains(err.Error(), protocol.CredentialRejected) {
+		t.Fatalf("refusal dropped the Endpoint own code: %v", err)
+	}
+}
+
+// TestCredentialRejectionOnConfiguredEndpointIsUnchanged verifies that an
+// authentication refusal from a machine whose token is configured is reported
+// verbatim.
+//
+// A configured token that the Endpoint still rejects is a real credential
+// problem: a wrong secret, a clock outside the accepted window or a replayed
+// nonce. Blaming the local configuration there would send the operator to a token
+// map that is already correct.
+func TestCredentialRejectionOnConfiguredEndpointIsUnchanged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"code":"credential_rejected","message":"the endpoint could not authenticate the presented credential"}`)
+	}))
+	defer server.Close()
+
+	api := newBearerClient(server.URL, "server-token")
+	api.EndpointTokens = map[string]string{"gd-dev": "endpoint-token"}
+	_, err := api.GetHistory(context.Background(), "gd-dev", 5)
+	if err == nil {
+		t.Fatal("GetHistory succeeded, want a refusal")
+	}
+	if strings.Contains(err.Error(), endpointTokensEnvName) {
+		t.Fatalf("refusal blamed the local configuration: %v", err)
+	}
+}

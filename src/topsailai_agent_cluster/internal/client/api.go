@@ -214,7 +214,7 @@ func (c *APIClient) applyEndpointCredential(req *http.Request, ctx context.Conte
 }
 
 // explainRefusal adds the local cause to a refusal that the Endpoint could only
-// report as a policy decision.
+// report as a policy decision or as an authentication failure.
 //
 // When the Endpoint refuses because no token was presented, the real cause is
 // usually that this CLI has no token for that machine. The Endpoint cannot say
@@ -222,6 +222,19 @@ func (c *APIClient) applyEndpointCredential(req *http.Request, ctx context.Conte
 // from a caller that deliberately presented none. The client can tell the
 // difference, so it names the missing configuration instead of leaving the
 // operator to guess why a machine they can reach refuses them.
+//
+// Two codes reach this function, and both mean the same thing locally. A policy
+// refusal is the Endpoint's answer when a credential was proven but its grants do
+// not cover the operation. A credential rejection is its answer when the
+// credential could not be proven at all, which is what an absent credential
+// produces. Guarding on the policy code alone therefore left the most common
+// misconfiguration unexplained: the operator read "the endpoint could not
+// authenticate the presented credential" and went looking at the Endpoint's
+// policy file, while the real cause was a missing entry in their own token map.
+//
+// The annotation is added only when this CLI has no token for the addressed
+// Endpoint, so a configured-but-wrong credential is still reported verbatim: the
+// local configuration is then not the cause, and naming it would mislead.
 //
 // The original error is preserved, because the Endpoint's own code and message
 // remain the authoritative statement of what happened.
@@ -232,7 +245,8 @@ func (c *APIClient) explainRefusal(err error, endpointID string) error {
 	if _, configured := c.EndpointTokens[endpointID]; configured {
 		return err
 	}
-	if !strings.Contains(err.Error(), "policy_denied") {
+	if !strings.Contains(err.Error(), protocol.PolicyDenied) &&
+		!strings.Contains(err.Error(), protocol.CredentialRejected) {
 		return err
 	}
 	return fmt.Errorf("%w (no endpoint token is configured for %q in %s)", err, endpointID, endpointTokensEnvName)
