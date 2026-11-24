@@ -193,6 +193,51 @@ function default_version() {
     esac
 }
 
+# The compatibility window a role package declares for its sibling packages.
+#
+# A patch release within one major.minor is interchangeable: the launcher, the
+# daemon and the config schema do not change, so a patch bump must install alone
+# instead of forcing every sibling package to be rebuilt at the same version. An
+# exact pin cannot express that, because `=` means "this version and no other",
+# so a one-line fix in the CLI forced the node package and all four site config
+# packages to be rebuilt, and a forgotten rebuild left dpkg refusing the install.
+#
+# A minor release is a coordinated change, so the window closes at the next
+# minor. The ceiling is not optional: a new launcher passing a flag an older
+# binary does not register fails at startup, and an older launcher omitting a
+# flag a newer binary requires fails the same way, so an unbounded `>=` would
+# accept a pair that cannot run together.
+#
+# The floor is the .0 of the current minor rather than the version being built.
+# Using the built version as the floor would reintroduce the defect for the next
+# patch: a 1.5.3 endpoint would demand a 1.5.3 node, so the patch that motivated
+# this window would still need every sibling rebuilt.
+function compat_window() {
+    local base="${VERSION%%-*}" major minor
+    case "${base}" in
+        *.*)
+            major="${base%%.*}"
+            minor="${base#*.}"
+            minor="${minor%%.*}"
+            ;;
+        *)
+            major="${base}"
+            minor="0"
+            ;;
+    esac
+    echo "${DEB_EPOCH}:${major}.${minor}.0 ${DEB_EPOCH}:${major}.$((minor + 1)).0"
+}
+
+# Renders one sibling dependency with the compatibility window, so the rule is
+# stated once instead of repeating two bounds on every dependency line.
+function version_range() {
+    local window floor ceiling
+    window=$(compat_window)
+    floor="${window%% *}"
+    ceiling="${window##* }"
+    echo "$1 (>= ${floor}), $1 (<< ${ceiling})"
+}
+
 # Resolving the version is a separate mode so that one `make deb` run can pin a
 # single version for every package. Each invocation otherwise re-derives it from
 # git, and a commit landing between two builds yields a set whose role packages
@@ -596,12 +641,17 @@ function build_role_package() {
     # The config package is a hard dependency rather than a recommendation: the
     # daemon cannot start without node.conf and its TLS material, so installing
     # the binary alone would leave a service that fails on every start.
+    #
+    # The dependency is a compatibility window rather than an exact pin, so a
+    # patch release of this package installs without rebuilding the node package
+    # or any site config package. See compat_window for why the window closes at
+    # the next minor instead of staying open.
     if [ "${ROLE}" = "endpoint" ]; then
-        write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-endpoint (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "$(version_range agent-cluster-node), $(version_range agent-cluster-config-endpoint), bash (>= 4.0), coreutils" \
             "" \
             "Agent Cluster endpoint daemon and operator CLI"
     else
-        write_control "agent-cluster-node (= ${CONTROL_VERSION}), agent-cluster-config-server (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "$(version_range agent-cluster-node), $(version_range agent-cluster-config-server), bash (>= 4.0), coreutils" \
             "" \
             "Agent Cluster server daemon"
     fi
@@ -662,11 +712,11 @@ function build_config_package() {
     # because every site-suffixed config package provides it, so one entry covers
     # every site without naming any of them.
     if [ "${EFFECTIVE_ROLE}" = "endpoint" ]; then
-        write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "$(version_range agent-cluster-node), bash (>= 4.0), coreutils" \
             "" \
             "Agent Cluster endpoint configuration and TLS identity for site ${SITE}"
     else
-        write_control "agent-cluster-node (= ${CONTROL_VERSION}), bash (>= 4.0), coreutils" \
+        write_control "$(version_range agent-cluster-node), bash (>= 4.0), coreutils" \
             "" \
             "Agent Cluster server configuration and TLS identity for site ${SITE}"
     fi
