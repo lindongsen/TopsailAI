@@ -923,3 +923,29 @@ process, so any assertion built on it must either narrow the measurement or narr
 patch. The negative control is what proves the filter works rather than merely
 compiling: the same probe that reported 5 foreign calls before the fix reports 0 after
 it, with the leaked sleeper still running.
+
+## Adding a Hook payload key breaks every configured Module fixture whose entry has a fixed signature
+
+Trigger: passing `tips` into `hook__workspace__before__input_message` made three
+integration tests fail with `TypeError: main() got an unexpected keyword argument
+'tips'`. The fixture in `tests/integration/test_input_application_checkpoint.py`
+wrote a Module source string `def main():`, which was correct while the point was
+called with no payload and became wrong the moment a key was added. The unit tests
+for the same point passed, because they patch the public entry with a `Mock` and
+never import a real Module.
+
+Action: before adding or renaming a payload key on any Hook Point, grep the test
+tree for Module sources that declare a fixed entry signature — `def main():`,
+`def main(log, point, fail=False):`, `def main(*, hook_context):` — and widen each
+one to `def main(**payload):` or `def main(*args, **kwargs):`. The framework
+contract is `entry(**payload)`, so a Module that names its parameters explicitly is
+only safe while the payload keys never change.
+
+Why this prevents recurrence: the failure is invisible in the unit layer, because a
+`Mock` entry accepts any keyword and the assertion still passes. It appears only
+where a real Module file is imported, which is the integration and BDD layer, and
+the traceback names the fixture's own `main()` rather than the payload change that
+broke it. The two layers disagree by construction, so a green unit run is not
+evidence that the payload change is safe. Widening the fixture entry is the correct
+repair rather than dropping the payload key, because the key is the feature and the
+fixture was relying on an accident of the old contract.
