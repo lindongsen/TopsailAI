@@ -54,7 +54,11 @@ def test_kill_signals_exact_verified_instance(tmp_path, rows):
     sender = Mock()
     assert invoke(tmp_path, rows, sender) == 0
     target, sig = sender.call_args.args
-    assert target == KillTarget(1234, 77, (1234, 77))
+    # The target now also carries the row filename the lock-state collector
+    # answers under, so the assertion states the complete resolved identity.
+    assert target == KillTarget(
+        1234, 77, (1234, 77), "session-123.1234.session.stdout",
+    )
     assert sig == 15
 
 

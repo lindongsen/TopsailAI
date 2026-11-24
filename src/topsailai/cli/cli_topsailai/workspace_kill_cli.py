@@ -36,6 +36,10 @@ class KillTarget:
     pid: int
     generation: int
     identity: tuple[int, int]
+    #: The discovered row's filename, which is the key the lock-state collector
+    #: answers under. It defaults to an empty string so a caller that only needs
+    #: the signal path can construct a target without it.
+    filename: str = ""
 
 
 class _UniqueSession(argparse.Action):
@@ -70,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the strict non-interactive workspace kill parser."""
     parser = argparse.ArgumentParser(
         prog="topsailai workspace kill",
-        description="Send SIGTERM to one exact verified workspace process instance.",
+        description=(
+            "Send SIGTERM to one exact verified workspace process instance, or "
+            "ask that instance to exit gracefully with --graceful."
+        ),
         allow_abbrev=False,
     )
     parser.add_argument(
@@ -81,6 +88,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-g", "--generation", required=True, action=_UniqueGeneration,
         help="exact process generation reported by workspace JSON",
+    )
+    parser.add_argument(
+        "--graceful",
+        action="store_true",
+        help=(
+            "do not signal; deliver the /exit message so the agent leaves on its "
+            "own. Requires the session lock state to be 'idle' (no task holds the "
+            "session) and the agent state to be 'input' (the process is alive and "
+            "waiting for input) at the same moment. If either condition does not "
+            "hold, or either cannot be observed, nothing is delivered and the "
+            "command refuses. Success means the message reached the input pipe, "
+            "not that the agent exited."
+        ),
     )
     parser.add_argument(
         "--json",
@@ -127,7 +147,7 @@ def _resolve_target(
         if not relation_probe(pid, path):
             uncertain = True
             continue
-        candidates.append(KillTarget(pid, identity[1], identity))
+        candidates.append(KillTarget(pid, identity[1], identity, row["filename"]))
     if len(candidates) > 1:
         raise WorkspaceKillError("multiple_live_instances")
     if not candidates:
@@ -196,6 +216,17 @@ _KILL_ERROR_MESSAGES = {
         "The process instance changed before the signal was delivered",
     "safe_signal_unsupported":
         "This platform cannot deliver a signal to a verified process instance",
+    # Graceful refusals. Each names the precondition that failed, because the
+    # caller's next action differs: a busy session must wait for its task, while
+    # an unobservable state must be retried or investigated.
+    "graceful_session_busy":
+        "The session lock is held by a task, so a graceful exit is refused",
+    "graceful_agent_not_waiting":
+        "The agent is not waiting for input, so a graceful exit is refused",
+    "graceful_status_unavailable":
+        "A required state could not be observed, so a graceful exit is refused",
+    "graceful_delivery_failed":
+        "The exit message could not be delivered to the agent input pipe",
 }
 
 
@@ -209,19 +240,58 @@ def _kill_error_message(error_code: str) -> str:
 def _kill_failure_exit_code(error_code: str) -> int:
     """Separate an environment capability gap from a target rejection.
 
-    Exit ``3`` means the target was rejected, so a caller may retry with a fresh
-    generation. Exit ``5`` means the environment cannot signal safely at all, so
-    retrying the same command can never succeed.
+    Exit ``3`` means the target or a precondition was rejected, so a caller may
+    retry with a fresh generation or after the session becomes free. Exit ``5``
+    means the environment cannot signal safely at all, so retrying the same
+    command can never succeed. Exit ``4`` means the action was authorized but its
+    delivery failed.
     """
-    return 5 if error_code == "safe_signal_unsupported" else 3
+    if error_code == "safe_signal_unsupported":
+        return 5
+    if error_code == "graceful_delivery_failed":
+        return 4
+    return 3
+
+
+def _row_for_target(rows: list[dict], target: KillTarget) -> dict:
+    """Return the exact discovered row the target was resolved from.
+
+    The lock-state collector answers under the row's filename, so the gate needs
+    the same row object rather than a reconstruction. A missing row is a
+    programming error, not a user error, because the target was built from one of
+    these rows.
+    """
+    for row in rows:
+        if row.get("filename") == target.filename:
+            return row
+    raise WorkspaceKillError("target_identity_unavailable")
+
+
+def _graceful_failure(error_code: str, message: str, target, json_mode: bool,
+                      session_id: str) -> int:
+    """Report one graceful refusal or delivery failure without claiming exit."""
+    exit_code = _kill_failure_exit_code(error_code)
+    if json_mode:
+        emit_failure("kill", exit_code, error_code, message,
+                     session_id=session_id,
+                     pid=target.pid if target is not None else None)
+    else:
+        print(f"[ERROR] Cannot gracefully stop session {session_id}: {message}",
+              file=sys.stderr)
+    return exit_code
 
 
 def run_workspace_kill_cli(
     argv, *, home_resolver=None, discover=discover_log_files,
     identity_probe=_process_identity, absence_probe=None,
     relation_probe=is_process_holding_file, bound_signal_sender=_signal_bound,
+    graceful_enrich=None, graceful_collect=None, graceful_deliverer=None,
 ) -> int:
-    """Resolve one exact process generation and submit SIGTERM through a pidfd."""
+    """Resolve one exact process generation, then signal it or ask it to exit.
+
+    The default action is SIGTERM. ``--graceful`` replaces the signal with the
+    ``/exit`` message, and only after both preconditions are observed to hold.
+    """
     json_mode = json_requested(argv)
     try:
         args = build_parser().parse_args(list(argv))
@@ -252,6 +322,12 @@ def run_workspace_kill_cli(
             identity_probe=identity_probe, absence_probe=absence_probe,
             relation_probe=relation_probe,
         )
+        if args.graceful:
+            return _run_graceful(
+                args, target, rows, str(home), json_mode,
+                enrich=graceful_enrich, collect=graceful_collect,
+                deliverer=graceful_deliverer,
+            )
         binding = bound_signal_sender(target, signal.SIGTERM)
     except WorkspaceKillError as error:
         error_code = str(error)
@@ -304,5 +380,84 @@ def run_workspace_kill_cli(
         f"[INFO] SIGTERM sent to session={args.session_id}, PID={target.pid}, "
         f"generation={target.generation}, binding={binding_name}; "
         f"process exit is not confirmed."
+    )
+    return 0
+
+
+def _run_graceful(args, target: KillTarget, rows: list[dict], home: str,
+                  json_mode: bool, *, enrich=None, collect=None,
+                  deliverer=None) -> int:
+    """Observe both preconditions, then deliver ``/exit`` through the pipe.
+
+    Nothing is delivered unless both states are observed to hold. A refusal is
+    the answer when either fails, because falling back to SIGTERM would perform a
+    destructive action the caller did not authorize.
+
+    The seams replace only the two collectors, never the gate itself. A seam that
+    replaced the whole gate would let a test (or a future caller) skip the
+    precondition check while still reporting a successful delivery, which is the
+    one failure this command must never have.
+    """
+    from cli_topsailai.workspace_kill_graceful import (
+        GracefulRefusal,
+        deliver_graceful_exit,
+        observe_graceful_states,
+    )
+
+    session_id = args.session_id
+    try:
+        row = _row_for_target(rows, target)
+        states = observe_graceful_states(row, home, enrich=enrich, collect=collect)
+    except GracefulRefusal as refusal:
+        return _graceful_failure(
+            refusal.error_code, refusal.message, target, json_mode, session_id,
+        )
+    except WorkspaceKillError as error:
+        return _graceful_failure(
+            str(error), _kill_error_message(str(error)), target, json_mode,
+            session_id,
+        )
+
+    task_dir = str(Path(home) / "workspace" / "task")
+    try:
+        result = (deliverer or deliver_graceful_exit)(
+            task_dir, session_id, target.pid,
+        )
+    except Exception as error:
+        return _graceful_failure(
+            "graceful_delivery_failed",
+            f"{type(error).__name__}: {error}", target, json_mode, session_id,
+        )
+    if not getattr(result, "ok", False):
+        detail = getattr(result, "error_code", None) or "delivery_failed"
+        return _graceful_failure(
+            "graceful_delivery_failed",
+            f"The exit message was not delivered ({detail})", target, json_mode,
+            session_id,
+        )
+
+    message = ("The /exit message was written to the agent input pipe after "
+               "confirming an idle session lock and an agent waiting for input; "
+               "agent exit is not confirmed")
+    if json_mode:
+        receipt = new_receipt("kill", session_id=session_id, pid=target.pid)
+        receipt.update(
+            ok=True, exit_code=0, delivery_state="pipe_written",
+            message=message,
+            bytes_written=getattr(result, "bytes_written", None),
+            response={
+                "graceful": True, "message": "/exit",
+                "generation": target.generation, "exit_confirmed": False,
+                "session_status": states["session_status"],
+                "agent_status": states["agent_status"],
+            },
+        )
+        emit_receipt(receipt)
+        return 0
+    print(
+        f"[INFO] /exit delivered to session={session_id}, PID={target.pid}, "
+        f"generation={target.generation}, session_status="
+        f"{states['session_status']}, agent_status={states['agent_status']}; "
+        f"agent exit is not confirmed."
     )
     return 0

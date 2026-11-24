@@ -808,7 +808,7 @@ Public result fields are `ok`, `exit_code`, `action`, `session_id`, `pid`, `deli
 | `runtime` | Execute one exact send, btw, control, logs or info operation; see the contract above. |
 | `session <ACTION>` | Inspect or update one session without entering session scope: `info`, `list`, `status`, `history`, `search`, `add-msg`, `delete`. See [topsailai_session](topsailai_session.md). |
 | `workspace [-f json] [list [-s ID1,ID2] [--json]]` | Display the workspace task list and exit. The default is the human-readable table; `-f/--format json` sets the workspace-scope format, while `list --json` explicitly selects JSON and takes precedence. `list -s/--session ID1,ID2` restricts the output to the named comma-separated sessions, including their task rows, and is applied before any metadata read. |
-| `workspace kill <session_id> -g GENERATION [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. |
+| `workspace kill <session_id> -g GENERATION [--graceful] [--json]` | Send SIGTERM without confirmation only when the exact session process generation is still verified. Obtain `GENERATION` from `workspace list --json` or `workspace -f json`; success means the OS accepted the signal, not that process exit was confirmed. `--graceful` replaces the signal with the `/exit` message and delivers it only when the session lock is `idle` and the agent is waiting for input; see [Graceful shutdown](#graceful-shutdown-with---graceful). |
 | `workspace agent [<folder>] [-m MODE] [-b/--background] [--task MESSAGE] [--non-interactive] [--driver DRIVER] [--session-id ID] [--env KEY=VALUE] [--json]` | Launch a configured agent in the foreground; the folder defaults to the caller's working directory. `--task` supplies the initial user task so a fresh agent starts without manual input. `--driver` runs the named agent driver instead of the settings.yaml `ai_agent_driver` while keeping settings.yaml context injection. `--session-id` fixes the launched session identity instead of minting one, and `--env` supplies a launch environment value that outranks settings.yaml. Background defaults to raw and honors an explicit `-m raw|tmux|dtach`, failing closed with exit code 4 when that mechanism is unavailable. `--non-interactive` suppresses launcher prompts for this launch only. |
 | `workspace resume -s SESSION [-d DRIVER] [-m MODE] [-b/--background] [--json]` | Resume one exact persisted idle session; success requires the resumed process to answer on its control channel within 7 seconds. |
 | `workspace driver <start/status/stop> -s SESSION [-p PID] [--json]` | Start, inspect or stop one exact session driver; see below. |
@@ -858,7 +858,7 @@ A caller-fixed identity is refused with exit code `4` and `error_code: identity_
 
 The JSON `response` publishes `env_overrides` as the sorted list of overridden variable names only, never their values, so a caller can confirm which variables it set without the receipt disclosing them. The key is absent when no `--env` was given, so a launch without overrides keeps its previous receipt shape. `session_id` in the receipt carries the honored identity, so a caller can verify the request was applied rather than inferred.
 
-`workspace agent`, `workspace kill`, and `workspace resume` use the same stable receipt fields when `--json` is selected: `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, and `delivery_unknown`. Command-specific established facts are placed in `response`. For kill, `signal_sent` means the OS accepted `SIGTERM`, not that the process exited. For background agent or resume, `submitted` means a launcher was submitted, not that it is ready. For foreground agent or resume, `launcher_exited` reports the observed launcher outcome and does not promote a wrapper exit into agent completion.
+`workspace agent`, `workspace kill`, and `workspace resume` use the same stable receipt fields when `--json` is selected: `ok`, `exit_code`, `action`, `session_id`, `pid`, `delivery_state`, `error_code`, `message`, `bytes_written`, `request_id`, `response`, and `delivery_unknown`. Command-specific established facts are placed in `response`. For kill, `signal_sent` means the OS accepted `SIGTERM`, not that the process exited, and `pipe_written` means the `/exit` message reached the input pipe, not that the agent consumed it or terminated. For background agent or resume, `submitted` means a launcher was submitted, not that it is ready. For foreground agent or resume, `launcher_exited` reports the observed launcher outcome and does not promote a wrapper exit into agent completion.
 
 ## Examples
 
@@ -1077,6 +1077,41 @@ topsailai workspace kill SESSION -g GENERATION [--json]
 Obtain `SESSION` and its non-null `process_generation` from the same recent `topsailai workspace -f json` snapshot. The command examines every exact ordinary session stdout row for that session, ignores rows whose original process is authoritatively absent, and requires exactly one live process that still holds its matching stdout file. Its immutable process generation must equal `GENERATION`; a bare session or PID never authorizes termination. Stale generations, PID reuse, unavailable identity evidence, changed file ownership and multiple live instances fail without sending a signal.
 
 On supported Linux systems, the command opens a pidfd for the verified PID, revalidates its process identity, and submits exactly one SIGTERM through that bound handle. When the running interpreter does not expose the pidfd bindings, it re-verifies the process identity immediately before `os.kill` and reports `response.binding="identity_recheck"` instead of `"pidfd"`, so the weaker guarantee is visible rather than implied; that fallback keeps a residual PID-reuse race between the identity check and the signal. Authoritative identity evidence is still mandatory, so an unverifiable target fails closed. Success means the OS accepted the signal for that verified process instance; it does not confirm exit, stop descendants, retry, escalate to SIGKILL, or delete logs. JSON success reports `delivery_state="signal_sent"` and returns the verified generation in `response.generation`. Exit `2` is invalid syntax or selector, `3` is target/identity/generation rejection, `4` is signal submission failure, and `5` is an environment capability gap that retrying the same command cannot resolve. The failure `message` is derived from `error_code`, so a capability gap never reports a target-selection failure.
+
+### Graceful shutdown with `--graceful`
+
+```text
+topsailai workspace kill SESSION -g GENERATION --graceful [--json]
+```
+
+`--graceful` replaces the signal with the `/exit` message, so the agent leaves on its own instead of being terminated. It is opt-in because the default action stays SIGTERM.
+
+`/exit` is not a new command. It is one member of the exit spellings the agent already understands, and the agent's own input path turns it into a normal exit. Delivery reuses the existing FIFO transport, so the framing, endpoint identity check and process-group-safe timeout are the ones already in use.
+
+Two independently observed facts must hold at the same moment before anything is delivered:
+
+| Precondition | Meaning | Source |
+|---|---|---|
+| `session_status` is `idle` | No task currently holds the session lock | The existing `topsailai_session_status` command |
+| `agent_status` is `input` | The process is alive and waiting for input | The same collector behind the workspace `status` column |
+
+Neither fact implies the other. A session can be `idle` while its process is still running, and a process can be waiting for input while a task holds the session. Both are therefore read, and delivery happens only when both agree.
+
+If either condition does not hold, or either cannot be observed, nothing is delivered and the command refuses. It never falls back to SIGTERM, because that would perform a destructive action the caller did not authorize. An unknown state is never treated as satisfied: a `null` status, a missing record, or a collector error all refuse.
+
+Only the target row is queried, so one invocation runs at most one child process. `-g/--generation` stays mandatory; the flag never relaxes the identity requirement, and a stale generation is rejected before any state is observed.
+
+JSON success reports `delivery_state="pipe_written"` with `response.graceful=true`, `response.message="/exit"`, `response.exit_confirmed=false`, and the observed `response.session_status` and `response.agent_status`. Delivery is not exit: a written line proves the bytes reached the pipe, not that the agent consumed them or terminated.
+
+| Exit | Meaning |
+|---|---|
+| `0` | Both preconditions held and the message was written to the input pipe |
+| `2` | Invalid syntax or selector, including a missing `--generation` |
+| `3` | Refused before delivery: `graceful_session_busy`, `graceful_agent_not_waiting`, or `graceful_status_unavailable` |
+| `4` | `graceful_delivery_failed`: the write failed or raised |
+| `5` | Environment capability gap that retrying the same command cannot resolve |
+
+The interactive `/kill <number>` command accepts no flags, so it has no graceful variant.
 
 
 ## Current-request first-byte control shortcuts
