@@ -108,3 +108,42 @@ def test_bundled_module_is_a_permanent_point_member():
     """The Module is discovered from the bundled folder without configuration."""
     result = hook__workspace__before__input_message()
     assert [item.handler.name for item in result.handlers] == [MODULE_NAME, "hook_script"]
+
+
+def test_tips_reach_script_environment(tmp_path, monkeypatch):
+    """The prompt text reaches a real Script child through its environment."""
+    output = tmp_path / "trace"
+    path = tmp_path / "capture"
+    path.write_text(f"#!/bin/sh\nprintf '%s' \"$TOPSAILAI_INPUT_TIPS\" >> '{output}'\n")
+    path.chmod(0o755)
+    monkeypatch.setenv(ENV_KEY, str(path))
+    assert load_module().main(tips="What would you like to do? ") == {"scripts": 1}
+    assert output.read_text() == "What would you like to do? "
+
+
+def test_missing_tips_reaches_script_as_empty(tmp_path, monkeypatch):
+    """An absent payload key still exports the variable, as an empty value."""
+    output = tmp_path / "trace"
+    path = tmp_path / "capture"
+    path.write_text(f"#!/bin/sh\nprintf '[%s]' \"$TOPSAILAI_INPUT_TIPS\" >> '{output}'\n")
+    path.chmod(0o755)
+    monkeypatch.setenv(ENV_KEY, str(path))
+    assert load_module().main() == {"scripts": 1}
+    assert output.read_text() == "[]"
+
+
+def test_tips_env_name_is_documented():
+    """The Module owns exactly one documented tips variable name."""
+    assert load_module().TIPS_ENV == "TOPSAILAI_INPUT_TIPS"
+
+
+def test_real_entry_forwards_tips_to_script(tmp_path, monkeypatch):
+    """The named entry carries the caller's prompt text down to the child."""
+    output = tmp_path / "trace"
+    path = tmp_path / "capture"
+    path.write_text(f"#!/bin/sh\nprintf '%s' \"$TOPSAILAI_INPUT_TIPS\" >> '{output}'\n")
+    path.chmod(0o755)
+    monkeypatch.setenv(ENV_KEY, str(path))
+    result = hook__workspace__before__input_message(tips="team prompt")
+    assert result.status == "success"
+    assert output.read_text() == "team prompt"

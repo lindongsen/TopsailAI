@@ -19,7 +19,7 @@ def direct_input(tmp_path, monkeypatch):
     module = tmp_path / "worker.py"
     script = tmp_path / "script"
     module.write_text(
-        "import json, os\ndef main():\n"
+        "import json, os\ndef main(**kwargs):\n"
         f"    with open({str(ledger)!r}, 'a') as f:\n"
         "        f.write(json.dumps({'kind': 'module', 'pid': os.getpid()}) + '\\n')\n"
     )

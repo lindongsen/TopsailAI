@@ -12,10 +12,10 @@ POINT = HookPointDeclaration(
     definition=EventDefinition(
         name=NAME, major_version=1,
         payload_schema={
-            "type": "object", "required": ["multiline"],
-            "properties": {"multiline": {"type": "boolean"}},
+            "type": "object", "required": ["tips"],
+            "properties": {"tips": {"type": "string"}},
         },
-        payload_limit_bytes=128,
+        payload_limit_bytes=8192,
     ),
     phase="before", mode="sync", owner="workspace.input_tool",
     failure_policy="report", latency_budget_ms=1_000,

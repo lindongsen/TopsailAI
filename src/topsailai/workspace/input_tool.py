@@ -338,7 +338,7 @@ def input_message(tips: str = "", hook: HookInstruction = None) -> str:
         hook__workspace__before__input_message,
     )
 
-    hook__workspace__before__input_message()
+    hook__workspace__before__input_message(tips=tips)
     try:
         if multiline:
             return input_multi_line(tips, hook)

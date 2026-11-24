@@ -24,16 +24,16 @@ def entry(monkeypatch):
 
 @pytest.mark.parametrize("multiline", [False, True])
 def test_mode_hook_reader_order(entry, monkeypatch, multiline):
-    """Invoke the zero-argument point once between mode selection and input."""
+    """Invoke the point once with the prompt text between mode selection and input."""
     trace = []
     monkeypatch.setattr(input_tool.env_tool, "is_chat_multi_line",
                         lambda: trace.append("mode") or multiline)
-    entry.side_effect = lambda: trace.append("hook")
+    entry.side_effect = lambda **kwargs: trace.append("hook")
     reader = Mock(side_effect=lambda *a: trace.append("read") or "original")
     monkeypatch.setattr(input_tool, "input_multi_line" if multiline else "input_one_line", reader)
     assert input_tool.input_message("prompt") == "original"
     assert trace == ["mode", "hook", "read"]
-    entry.assert_called_once_with()
+    entry.assert_called_once_with(tips="prompt")
     reader.assert_called_once_with("prompt", None)
 
 
@@ -49,7 +49,7 @@ def test_reader_loops_do_not_redispatch(entry, monkeypatch, multiline, lines):
     instruction = Mock()
     instruction.exist_hook.side_effect = lambda text: text.strip() == "/help"
     assert input_tool.input_message(hook=instruction) == ("first\nsecond" if multiline else "message")
-    entry.assert_called_once_with()
+    entry.assert_called_once_with(tips="")
     instruction.call_hook.assert_called_once_with("/help")
 
 
@@ -59,7 +59,7 @@ def test_exit_semantics(entry, monkeypatch, command):
     monkeypatch.setattr(input_tool, "_input", lambda *a: command)
     with pytest.raises(SystemExit):
         input_tool.input_message()
-    entry.assert_called_once_with()
+    entry.assert_called_once_with(tips="")
 
 
 def test_direct_read_excluded(entry, monkeypatch):
