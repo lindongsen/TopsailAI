@@ -405,3 +405,51 @@ func TestRenderCommandExecResultReportsUnreadableDocument(t *testing.T) {
 		t.Fatalf("unreadable document was dropped: %q", output.String())
 	}
 }
+
+// TestRenderCommandExecResultPrintsTheEndpointErrorMessage proves a refusal
+// renders the Endpoint's own explanation, not only its code.
+//
+// The code names the condition and the message names the remedy. A refusal that
+// printed only command_directory_unavailable left the operator with a symptom and
+// no next step, which is the half of the refusal that tells them what to
+// configure. The paired case below proves the line is conditional, so a receipt
+// without a message keeps the previous output.
+func TestRenderCommandExecResultPrintsTheEndpointErrorMessage(t *testing.T) {
+	message := "AGENT_CLUSTER_ENDPOINT_COMMAND_DIR is not configured, so endpoint scope has no working directory"
+	var output strings.Builder
+	result := map[string]any{
+		"command_id":       "cmd-1",
+		"status":           string(protocol.StatusRejected),
+		"effect_certainty": string(protocol.EffectNotApplied),
+		"error_code":       protocol.CommandDirectoryUnavailable,
+		"error_message":    message,
+	}
+	if err := renderCommandExecResult(&output, result, ColorPolicy{}); err != nil {
+		t.Fatalf("renderCommandExecResult: %v", err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "ErrorCode: "+protocol.CommandDirectoryUnavailable) {
+		t.Fatalf("receipt missing the code: %q", rendered)
+	}
+	if !strings.Contains(rendered, "ErrorMessage: "+message) {
+		t.Fatalf("receipt missing the remedy: %q", rendered)
+	}
+}
+
+// TestRenderCommandExecResultOmitsAnAbsentErrorMessage proves the new line is
+// conditional, so a receipt the Endpoint did not annotate renders as before.
+func TestRenderCommandExecResultOmitsAnAbsentErrorMessage(t *testing.T) {
+	var output strings.Builder
+	result := map[string]any{
+		"command_id":       "cmd-1",
+		"status":           string(protocol.StatusRejected),
+		"effect_certainty": string(protocol.EffectNotApplied),
+		"error_code":       "policy_denied",
+	}
+	if err := renderCommandExecResult(&output, result, ColorPolicy{}); err != nil {
+		t.Fatalf("renderCommandExecResult: %v", err)
+	}
+	if strings.Contains(output.String(), "ErrorMessage:") {
+		t.Fatalf("an absent message rendered a line: %q", output.String())
+	}
+}

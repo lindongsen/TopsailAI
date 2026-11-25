@@ -128,6 +128,13 @@ func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 	if err := rejectMisplacedFlags(args[0], head); err != nil {
 		return err
 	}
+	// Everything after the separator is literal argv by contract, so a "--yes"
+	// written there is a command argument and never a confirmation. The parser
+	// must not hoist it across the separator, because "exec ep -- apt-get install
+	// --yes pkg" is legitimate argv. What it must not do is repeat the fixed
+	// advice, which tells the operator to add the flag they already wrote and so
+	// sends them to add it again instead of moving it.
+	hint := execConfirmationHint(argv)
 	endpointID := head[0]
 	// A single head element addresses the machine. It carries no resource and no
 	// generation, because there is no session identity to name and no process to
@@ -144,12 +151,13 @@ func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 			return err
 		}
 		return submitActionWithProgress(ctx, api, output, diagnostics, tui.ActionRequest{
-			Operation:      protocol.OperationCommandExec,
-			OperationLabel: "exec",
-			EndpointID:     endpointID,
-			Payload:        payload,
-			Confirmed:      confirmed,
-			WaitTimeoutMS:  waitTimeoutMS,
+			Operation:        protocol.OperationCommandExec,
+			OperationLabel:   "exec",
+			EndpointID:       endpointID,
+			Payload:          payload,
+			Confirmed:        confirmed,
+			WaitTimeoutMS:    waitTimeoutMS,
+			ConfirmationHint: hint,
 		}, jsonMode)
 	}
 	resourceID := head[1]
@@ -176,7 +184,32 @@ func execCommandWithProgress(ctx context.Context, api tui.CommandAPI, output, di
 		Payload:            payload,
 		Confirmed:          confirmed,
 		WaitTimeoutMS:      waitTimeoutMS,
+		ConfirmationHint:   hint,
 	}, jsonMode)
+}
+
+// execConfirmationHint explains a confirmation refusal when the operator wrote
+// the confirming flag after the "--" separator.
+//
+// Everything after the separator is literal argv, so the flag became a command
+// argument and the command is genuinely unconfirmed. The fixed advice is wrong
+// here: it tells the operator to add a flag they already wrote, so the natural
+// next step is to add it again rather than to move it. The hint names the
+// placement instead, and it is returned only when the tail actually contains a
+// yes spelling, so an ordinary unconfirmed invocation keeps the previous message
+// byte-identical.
+//
+// The tail is inspected for the spelling only. It is never rewritten, because a
+// command may legitimately take "--yes" as its own argument, and removing it
+// would change what the operator asked to run.
+func execConfirmationHint(argv []string) string {
+	for _, arg := range argv {
+		name, _ := splitOptionName(arg)
+		if name == "yes" {
+			return "the --yes after -- is part of the command argv, so it did not confirm; write --yes before --, as in exec <endpoint> --yes -- <argv...>"
+		}
+	}
+	return ""
 }
 
 // submitAction prepares, submits, waits for and renders one immutable intent.

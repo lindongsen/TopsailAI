@@ -15,6 +15,25 @@ const CommandExecMaxArgv = 64
 // CommandExecMaxTokenBytes bounds one argv token of a command.exec request.
 const CommandExecMaxTokenBytes = 4096
 
+// Stable command.exec directory refusal codes.
+//
+// The two codes are separate because the remedy differs and because the two
+// directory sources are different authorities. A session directory comes from
+// provider evidence, so its absence is a fact about that session. The Endpoint
+// directory comes from Endpoint configuration, so its absence is a setting the
+// operator must supply. One shared code made the endpoint-scope form name a
+// session directory it never addressed, which sent the investigation to the
+// wrong component and hid the setting that was actually missing.
+const (
+	// CommandSessionDirectoryUnavailable reports that a session-scoped request
+	// found no usable working directory in the provider's own evidence.
+	CommandSessionDirectoryUnavailable = "session_directory_unavailable"
+	// CommandDirectoryUnavailable reports that an endpoint-scoped request has no
+	// configured working directory, so AGENT_CLUSTER_ENDPOINT_COMMAND_DIR must be
+	// set before the form can run.
+	CommandDirectoryUnavailable = "command_directory_unavailable"
+)
+
 // CommandExecRequest carries one argv array. It never carries a command string,
 // because the Endpoint must not parse or split a string: doing so would
 // reintroduce shell semantics that the allowlist cannot reason about.

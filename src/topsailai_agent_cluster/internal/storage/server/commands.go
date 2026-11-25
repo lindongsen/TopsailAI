@@ -35,6 +35,12 @@ type CommandRecord struct {
 	Warnings     []string `json:"warnings,omitempty"`
 	DeadlineAtMS int64    `json:"deadline_at_ms"`
 	CreateAtMS   int64    `json:"create_at_ms"`
+	// ErrorMessage carries the Endpoint's own explanation of a refusal. It is
+	// stored so a command read after the fact still names the setting or the
+	// evidence that was missing; dropping it here left the operator with a code
+	// such as command_directory_unavailable and no statement of what to
+	// configure, which is the half of the refusal that carries the remedy.
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // MarshalJSON preserves the legacy exported field names while exposing stable snake-case fields.
@@ -58,6 +64,7 @@ func (r CommandRecord) MarshalJSON() ([]byte, error) {
 	fields["EffectCertainty"] = r.EffectCertainty
 	fields["ExitConfirmed"] = r.ExitConfirmed
 	fields["ErrorCode"] = r.ErrorCode
+	fields["ErrorMessage"] = r.ErrorMessage
 	fields["ProviderResponse"] = r.ProviderResponse
 	fields["ProviderResponseTruncated"] = r.ProviderResponseTruncated
 	fields["Warnings"] = r.Warnings

@@ -39,6 +39,11 @@ type ActionRequest struct {
 	// mapping; the client never looks the session up and never decides whether it
 	// exists.
 	ProviderSessionHandle string
+	// ConfirmationHint replaces the fixed "rerun with --yes" advice when the
+	// caller can explain why the flag the operator supplied did not confirm the
+	// command. It is presentation only: it never participates in routing, the
+	// immutable intent or the confirmation decision itself.
+	ConfirmationHint string
 }
 
 // ActionResult contains the durable result and command identifier.
@@ -77,7 +82,7 @@ func (r CommandRunner) PrepareAction(ctx context.Context, request ActionRequest)
 	if label == "" {
 		label = request.Operation
 	}
-	if err := RequireConfirmation(request.Confirmed, label, confirmationTargetLabel(request), string(request.Payload)); err != nil {
+	if err := RequireConfirmation(request.Confirmed, label, confirmationTargetLabel(request), string(request.Payload), request.ConfirmationHint); err != nil {
 		return protocol.ImmutableIntent{}, err
 	}
 	descriptor, err := PreflightCapability(ctx, r.API, request.EndpointID, request.Operation)

@@ -362,8 +362,12 @@ selected and running there would be a silent wrong-place execution rather than a
 visible failure.
 
 An unset value disables the endpoint-scope form. The Endpoint refuses the request with
-an explicit error naming this setting, so an operator learns the remedy instead of
-reading a directory failure. Session-scope behaviour is unaffected by this setting.
+`command_directory_unavailable` and a message naming this setting, so an operator learns the
+remedy instead of reading a directory failure. That code is deliberately distinct from
+`session_directory_unavailable`, which reports that a session-scoped request found no usable
+working directory in provider evidence: the two sources are different authorities, so one shared
+code named a session directory the endpoint-scope form never addressed and sent the investigation
+to the wrong component. Session-scope behaviour is unaffected by this setting.
 
 A configured value must be an absolute path to an existing directory. A relative path
 is rejected at startup, because it would resolve against the process working directory,

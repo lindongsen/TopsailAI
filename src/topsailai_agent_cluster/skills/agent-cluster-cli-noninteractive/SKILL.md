@@ -109,6 +109,12 @@ agent-cluster-cli [options] <command> [arguments]
 Global options may be written **before or after** the command word; the parser hoists trailing
 options. Both `--json` and `-json` are accepted.
 
+Hoisting stops at the `--` separator. Everything after `--` is literal argv by contract, so a
+global option written there is a command argument and never an option. `exec` is the command with
+that separator, and `exec ep -- apt-get install --yes pkg` is a legitimate invocation in which the
+trailing `--yes` belongs to `apt-get`. Write the confirming `--yes` before `--`, as in
+`exec <endpoint> --yes -- <argv...>`.
+
 | Option | Meaning |
 |---|---|
 | `--json` | Write the structured document instead of the rendered form |
@@ -165,7 +171,7 @@ literal data. `exec` keeps its own `--` because the terminator is part of its sy
 | `btw` | `btw <endpoint> <resource> [text] [generation]` | `--yes` |
 | `interrupt` | `interrupt [soft\|hard] <endpoint> <resource> [message] [generation]` — the action word is its own slot; both actions accept a message; the generation travels in `--generation` only | `--yes` |
 | `ctl` (alias `control`) | `ctl <endpoint> <resource> <action> [json] [generation]` | `--yes` |
-| `exec` | `exec <endpoint> <resource> <generation> -- <argv...>` or `exec <endpoint> -- <argv...>` | `--yes` |
+| `exec` | `exec <endpoint> <resource> <generation> -- <argv...>` or `exec <endpoint> -- <argv...>`; `--yes` goes **before** `--` | `--yes` |
 | `start` | `start <endpoint> <resource> [text] [generation] --profile <id> --profile-revision <rev>` | `--yes` |
 | `resume` | `resume <endpoint> <resource> [generation]` or `resume <endpoint> -s <session-id> [--generation g]` | `--yes` |
 | `stop` | `stop <endpoint> <resource> <generation>` | `--yes` |
@@ -251,10 +257,23 @@ reporting an error.
   accepted by the cluster and then refused at the provider seam with
   `hard_interrupt does not accept a message` as `invalid_request` / `not_applied`. Treat this as a
   provider limitation rather than a syntax error, and use `soft` when a message must reach the agent.
-- **`exec` requires `--`.** Without it the command reports
+- **`exec` requires `--`, and `--yes` must come before it.** Without `--` the command reports
   `usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>`. The argv array comes from
   the shell's own word splitting and is never re-tokenized. The endpoint-only form
   (`exec <endpoint> -- <argv>`) must not carry a generation.
+  A `--yes` written after `--` becomes part of the argv, so the command stays unconfirmed and the
+  refusal says `the --yes after -- is part of the command argv, so it did not confirm; write --yes
+  before --`. That wording is the signal to move the flag, not to add it again. The tail is never
+  rewritten, because `exec ep -- apt-get install --yes pkg` legitimately passes `--yes` to
+  `apt-get`.
+- **The endpoint-only form needs `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` on that Endpoint.** The form
+  addresses the machine, so its working directory comes from Endpoint configuration rather than
+  from a session. When the setting is unset the request is refused with
+  `command_directory_unavailable` and a message naming the setting; the form is then unavailable
+  until an operator configures it. This is distinct from `session_directory_unavailable`, which
+  means a session-scoped request found no usable directory in provider evidence. Do not read the
+  endpoint-scope refusal as "this endpoint has no session" — the form addresses no session by
+  design.
 - **`stop` requires a generation positionally**; `clean` does not, because an expired session
   may have no verified liveness.
 - **`drive status` takes no generation** and refuses one.
@@ -403,7 +422,9 @@ token that cannot be signed is reported as a local configuration error before an
   stderr, so `--json` on stdout stays clean. Do not merge the streams before parsing.
 - **Writing global options after a positional payload.** They are hoisted, so a flag written
   after the payload is still a flag. That is convenient, and it is also why a mutating command
-  can run when you believed you were only inspecting it.
+  can run when you believed you were only inspecting it. Hoisting stops at `--`: a flag written
+  after the separator is argv, so `exec ep -- ls --yes` runs `ls --yes` unconfirmed instead of
+  confirming the command.
 
 ## Verification Checklist
 

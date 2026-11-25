@@ -379,3 +379,56 @@ func TestOpenMigratesOfflineTimestamp(t *testing.T) {
 		t.Fatalf("offline timestamp indexes=%d, want 1", indexes)
 	}
 }
+
+// TestCommandRecordCarriesTheEndpointErrorMessage proves a refusal keeps the
+// Endpoint's own explanation, not only its code.
+//
+// The code names the condition and the message names the remedy. Dropping the
+// message left the operator with command_directory_unavailable and no statement
+// of which setting to configure, which is the half of the refusal that tells them
+// what to do. The assertion covers both read paths because they decode the stored
+// receipt independently, so a fix applied to one would leave the other silent.
+func TestCommandRecordCarriesTheEndpointErrorMessage(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertEndpoint(ctx, protocol.Endpoint{EndpointID: "e1", InstanceID: "i1", DisplayName: "one", ConnectionState: "online", ObservedAtMS: 1, CapabilityRevision: "v1"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	intent := protocol.ImmutableIntent{HashVersion: "v1", CommandID: "cmd-dir", EndpointID: "e1", Operation: protocol.OperationCommandExec, OperationVersion: protocol.CommandExecPayloadVersion, CapabilityRevision: "v1", PayloadSchemaVersion: "v1", Payload: []byte(`{"argv":["ls"]}`), ExecuteBeforeAtMS: 100}
+	if err := store.AdmitCommand(ctx, intent, "hash-dir", 1); err != nil {
+		t.Fatal(err)
+	}
+	message := "AGENT_CLUSTER_ENDPOINT_COMMAND_DIR is not configured, so endpoint scope has no working directory"
+	receipt := protocol.ExecutionReceipt{
+		CommandID: intent.CommandID, RequestHash: "hash-dir", CommandRevision: 1,
+		Phase: protocol.PhaseReceiptRecorded, EffectCertainty: protocol.EffectNotApplied,
+		Outcome: "failed", ErrorCode: protocol.CommandDirectoryUnavailable, ErrorMessage: message,
+	}
+	if err := store.ApplyReceipt(ctx, receipt, 2); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetCommand(ctx, intent.CommandID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ErrorCode != protocol.CommandDirectoryUnavailable {
+		t.Fatalf("error code = %q, want %q", record.ErrorCode, protocol.CommandDirectoryUnavailable)
+	}
+	if record.ErrorMessage != message {
+		t.Fatalf("error message = %q, want %q", record.ErrorMessage, message)
+	}
+	items, err := store.ListCommands(ctx, "e1", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("commands = %d, want 1", len(items))
+	}
+	if items[0].ErrorMessage != message {
+		t.Fatalf("listed error message = %q, want %q", items[0].ErrorMessage, message)
+	}
+}

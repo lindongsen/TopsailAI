@@ -233,11 +233,15 @@ Precondition: the Endpoint was started without `AGENT_CLUSTER_ENDPOINT_COMMAND_D
 an allowlist that contains the program under test.
 
 Enter endpoint scope and type `!pwd` then Enter. Expect Status `failed`, EffectCertainty
-`not_applied` and ErrorCode `session_directory_unavailable`, and expect the message to
+`not_applied` and ErrorCode `command_directory_unavailable`, and expect the message to
 name `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` together with the reason it is unusable. Expect
 no `stdout:` section. A command that silently runs in the Endpoint process working
 directory is a FAIL: that directory is not an operator decision, and the confinement
 check would then be computed against a directory nobody chose.
+
+The code must be `command_directory_unavailable` and not `session_directory_unavailable`.
+The endpoint-scope form addresses no session, so a session-directory code names a
+directory the request never asked for and sends the investigation to the wrong component.
 
 Confirm session scope is unaffected on the same Endpoint: select a session and type
 `!pwd`, and expect the session working directory as in CTLEXEC-06. The setting must not

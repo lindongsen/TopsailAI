@@ -29,11 +29,22 @@ func WaitContext(parent context.Context, budget protocol.Budget) (context.Contex
 }
 
 // RequireConfirmation enforces the second confirmation for mutating actions.
-func RequireConfirmation(confirmed bool, operation, target, parameters string) error {
+//
+// hint replaces the fixed "rerun with --yes" advice when the caller can explain
+// why the flag the operator supplied did not confirm the command. The fixed
+// sentence is wrong in that case: it tells the operator to add a flag they
+// already wrote, so the natural next step is to add it again instead of moving
+// it. An empty hint keeps the previous message byte-identical, so a caller that
+// has nothing to explain loses nothing.
+func RequireConfirmation(confirmed bool, operation, target, parameters string, hint ...string) error {
 	if confirmed {
 		return nil
 	}
-	return fmt.Errorf("confirmation required for %s target=%s parameters=%s; rerun with --yes", operation, target, parameters)
+	advice := "rerun with --yes"
+	if len(hint) > 0 && hint[0] != "" {
+		advice = hint[0]
+	}
+	return fmt.Errorf("confirmation required for %s target=%s parameters=%s; %s", operation, target, parameters, advice)
 }
 
 // ValidateCapability rejects an operation that is not explicitly advertised.
