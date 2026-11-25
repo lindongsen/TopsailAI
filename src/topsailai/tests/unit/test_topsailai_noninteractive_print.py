@@ -13,17 +13,31 @@ from topsailai.workspace.print_tool import TeeOutput
 @pytest.mark.parametrize("interactive", ["0", "1"])
 @pytest.mark.parametrize("debug", ["0", "1"])
 def test_output_permission_matrix(monkeypatch, value, interactive, debug):
-    """Preserve legacy decisions unless the explicit output override is true."""
+    """Unset defaults to permitted; only an explicit falsy value silences output."""
     monkeypatch.setenv("TOPSAILAI_INTERACTIVE_MODE", interactive)
     monkeypatch.setenv("DEBUG", debug)
     if value is None:
         monkeypatch.delenv("TOPSAILAI_PRINT_ENABLED", raising=False)
     else:
         monkeypatch.setenv("TOPSAILAI_PRINT_ENABLED", value)
-    permitted = interactive == "1" or value in ("1", "TRUE", "yes", "on", " enabled ")
+    effective = "1" if value is None else value
+    permitted = interactive == "1" or effective in ("1", "TRUE", "yes", "on", " enabled ")
     assert env_tool.is_print_enabled() is permitted
     assert env_tool.is_need_print() is (permitted or debug == "1")
     assert env_tool.is_interactive_mode() is (interactive == "1")
+
+
+def test_unset_default_permits_output_in_noninteractive_mode(monkeypatch):
+    """An unset variable must not silence a noninteractive run.
+
+    A noninteractive run means "do not prompt for input", not "produce no
+    output". Leaving the variable unset therefore keeps the narrative gate
+    open; silencing requires an explicit falsy value.
+    """
+    monkeypatch.setenv("TOPSAILAI_INTERACTIVE_MODE", "0")
+    monkeypatch.setenv("DEBUG", "0")
+    monkeypatch.delenv("TOPSAILAI_PRINT_ENABLED", raising=False)
+    assert env_tool.is_print_enabled() is True
 
 
 @pytest.mark.parametrize("enabled", ["0", "1"])

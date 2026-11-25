@@ -145,16 +145,14 @@ def is_interactive_mode() -> bool:
 def is_print_enabled() -> bool:
     """Decide whether framework narrative may be printed.
 
-    Interactive mode implies yes. A non-interactive run may still opt in
-    through ``TOPSAILAI_PRINT_ENABLED``, which is the supported way to keep
-    a background agent's stdout informative while it does not prompt for
-    input.
+    Interactive mode implies yes. A non-interactive run also prints by
+    default, because non-interactive means "do not prompt for input", not
+    "produce no output": a background run that leaves an empty stdout
+    record cannot be diagnosed afterwards.
 
-    Non-interactive mode means "do not prompt for input", not "produce no
-    output". A background run that leaves an empty stdout record cannot be
-    diagnosed afterwards, so a non-interactive deployment is expected to
-    set ``TOPSAILAI_PRINT_ENABLED=1``. Leaving it at the default ``0`` is
-    what makes a session look silent even though the agent is working.
+    ``TOPSAILAI_PRINT_ENABLED`` therefore defaults to enabled. Set it to
+    ``0`` to silence framework narrative in a non-interactive run; that is
+    an explicit opt-out, not the default.
 
     This gate covers framework narrative only. Display-only components
     such as the streaming progress indicator are gated by
@@ -162,9 +160,10 @@ def is_print_enabled() -> bool:
     gate is closed; see that function for why the two are separate.
 
     Returns:
-        bool: True when interactive mode is on or the print override is set.
+        bool: True when interactive mode is on or the print override is not
+            explicitly disabled.
     """
-    return is_interactive_mode() or is_true(os.getenv("TOPSAILAI_PRINT_ENABLED", "0"))
+    return is_interactive_mode() or is_true(os.getenv("TOPSAILAI_PRINT_ENABLED", "1"))
 
 
 def is_debug_mode():

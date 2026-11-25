@@ -225,6 +225,11 @@ class TestPrintTool(unittest.TestCase):
         if 'DEBUG' in os.environ:
             del os.environ['DEBUG']
 
+        # This case exercises the debug gate, not the output gate. Output is
+        # permitted by default now, so silence it explicitly; otherwise
+        # is_need_print() is true and print_debug emits regardless of DEBUG.
+        os.environ['TOPSAILAI_PRINT_ENABLED'] = '0'
+
         # Mock thread_local_tool.get_thread_var to return None (falsy)
         mock_get_thread_var.return_value = None
 
