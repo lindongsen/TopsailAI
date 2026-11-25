@@ -1,6 +1,6 @@
 ---
 name: agent-cluster-cli-interactive
-description: Use when a human or agent drives Agent Cluster from the interactive REPL (`agent-cluster-cli -i`) — the surface where row numbers, `cd` scope navigation and bare commands work. Covers the three scopes and how to move between them, the row-number namespaces, the daily "what did the agent just do" workflow with `messages` and `logs`, the auto-tail that `cd` arms, the per-scope command matrix, the `!` allowlisted-command prefix, the aliases and shorthands, and the identifier traps that make a correct-looking command fail.
+description: Use when a human or agent drives Agent Cluster from the interactive REPL (`agent-cluster-cli -i`) — the surface where row numbers, `cd` scope navigation and bare commands work. Covers the three scopes and how to move between them, the row-number namespaces, the daily "what did the agent just do" workflow with `messages` and `logs`, the auto-tail that `cd` arms, the per-scope command matrix, the `start` launch wizard that resolves the launch profile itself, the `!` allowlisted-command prefix, the aliases and shorthands, and the identifier traps that make a correct-looking command fail.
 version: 1.0.0
 author: DawsonLin
 license: Apache-2.0
@@ -276,6 +276,66 @@ offered as a send action, so a typo becomes a question rather than an error:
 
 Answer `n` unless the text really is what you meant to send.
 
+## Launching an Agent: The `start` Wizard
+
+`start` is available in workspace and endpoint scope, and it is a **wizard**, not a one-line
+command. It asks for the two things it cannot infer — the working folder and the task — and it
+resolves the launch profile itself, so the operator never types a profile ID or revision.
+
+```text
+endpoint[topsail/ac.topsail]> start
+1. data-hub (/qrew/data-hub)
+2. host-dev (/work/hosts/host-dev)
+...
+12. topsailai_agent_cluster (/TopsailAI/src/topsailai_agent_cluster)
+Choose a project number or enter a folder; empty/cancel cancels.
+start.folder> 12
+start.folder> 12 (topsailai_agent_cluster (/TopsailAI/src/topsailai_agent_cluster))
+start.task> summarize the open issues
+```
+
+The wizard has exactly two prompts, and each accepts one answer:
+
+| Prompt | Accepts | Notes |
+|---|---|---|
+| `start.folder>` | a project number from the printed list, or a literal folder path | The list is the endpoint's **registered projects**, not a filesystem scan. A folder outside that list must be typed as a path. An empty answer cancels. |
+| `start.task>` | one line of task text | An empty answer does **not** cancel; it switches to multi-line mode, described below. |
+
+The project list is numbered per launch, so a number is a position in that list, not a project
+identity. Re-read the list before reusing a number, exactly as with row numbers.
+
+**An empty task switches to multi-line input.** The wizard prints
+`Enter task; finish with a standalone EOF line or Ctrl+D` and changes the prompt to `task>`. This is
+the same multi-line reader the standalone `--task`-less form uses. Finish with a standalone `EOF`
+line or `Ctrl+D`; the terminator is never part of the task. An empty multi-line task is rejected
+rather than submitted as nothing.
+
+**`Ctrl+C` cancels the wizard** and returns to the scope it started from, printing `interrupted`.
+Nothing is submitted, so an abandoned wizard leaves no session behind.
+
+After a completed start, the REPL forces one collection for the endpoint and then arms the same live
+tail as `logs -f` on the session that appeared, so the new agent is watched without typing `logf`.
+The tail is armed **after** the collection because the launched session's generation is minted by
+it. No tail is armed when no session appeared, when more than one appeared, when the generation is
+unverified, or when the client cannot stream; the reason is reported as a diagnostic instead.
+
+The wizard prints `session submitted but not yet visible; the next collection will show it`. That
+line is **not** proof of success. Confirm the launch by reading the session back:
+
+```text
+lb                  # the new row appears after the collection
+cd <row>            # enter it; the tail shows the agent starting
+messages            # the task text you typed is the first user message
+```
+
+A new row alone does not prove the task arrived, and the auto-generated session name can differ from
+the task wording, so read `messages` rather than trusting the name.
+
+**The wizard is the supported way to launch.** The standalone surface requires `--profile` and
+`--profile-revision`, and no CLI command lists their values, so a script cannot discover them. When
+a launch must be automated, drive this wizard through a terminal multiplexer rather than guessing a
+profile ID.
+
 ## The `!` Allowlisted Command Prefix
 
 `!` runs one allowlisted command through the Endpoint's `command.exec` operation, in the session's
@@ -342,6 +402,12 @@ and `lf` disables truncation when a long cell must be read in full.
   leave from anywhere.
 - **Sending `--help` to an agent.** `send` and `btw` treat the rest of the line as literal text, so
   `send --help` sends the word `--help`. Use `help send`.
+- **Treating `start` as a one-line command.** It is a wizard with two prompts. An empty answer at
+  `start.folder>` cancels, but an empty answer at `start.task>` switches to multi-line input instead,
+  so a stray Enter does not abort the launch.
+- **Trusting `session submitted but not yet visible`.** That line is not proof the launch worked.
+  Read the session back with `messages` to confirm the task text arrived, because the auto-generated
+  session name can differ from the task wording.
 
 ## Verification Checklist
 
@@ -354,6 +420,10 @@ and `lf` disables truncation when a long cell must be read in full.
 - [ ] `!` was used only in session or endpoint scope, with an allowlisted program.
 - [ ] `exit` was used to leave from a non-workspace scope.
 - [ ] Anything a script must parse was run on the standalone surface instead of the REPL.
+- [ ] A launch was confirmed by reading `messages`, not by trusting the wizard's
+      `session submitted but not yet visible` line.
+- [ ] The `start` project number was taken from the list printed by that launch, not reused from an
+      earlier launch.
 
 ## File Structure Description
 
