@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: resolved
 ---
 
 # Issue: Non-Interactive Mode Produced No Usable stdout Content
@@ -92,3 +92,37 @@ Both variables were set to `1` in the two `settings.yaml` files, and the running
 was overridden in memory through the control channel (`env.set`), verified with
 `env.get`. The override is process-scoped and dies with the process; the configuration
 change covers future launches. Neither changes the default that produced the silent run.
+
+## Resolution
+
+The second option was chosen: the default now permits printing, and an explicit `0`
+silences it. A non-interactive run therefore produces a usable stdout record without
+any operator action.
+
+Changed together, because either one alone is insufficient:
+
+- `utils/env_tool.py::is_print_enabled()` — the code default is now `"1"`.
+- `env_template` — the tracked file that `/root/.topsailai/.env` symlinks to. It
+  previously set `TOPSAILAI_PRINT_ENABLED=0`, and `topsailai/__init__.py::__load_env()`
+  applies it through `load_dotenv` at import, so a code-only change would have been
+  silently overridden.
+- `docs/Environment_Variables.md` — the table row now documents `1` as the default.
+
+The `is_need_print()` / `is_print_enabled()` split is unchanged, and `ContentProgress`
+still bypasses the narrative gate.
+
+Two tests encoded the old default and were updated:
+
+- `test_output_permission_matrix` treated an unset variable as silenced; it now treats
+  unset as permitted, and a new `test_unset_default_permits_output_in_noninteractive_mode`
+  pins that contract.
+- `test_print_debug_no_output` exercises the debug gate, not the output gate. It now sets
+  `TOPSAILAI_PRINT_ENABLED=0` explicitly, because `print_debug` gates on
+  `is_need_print()`, which is open by default.
+
+Verification: the affected suites pass (116 tests), `tests/unit/workspace` passes (949),
+and the mandated runner reports 389 failures that are byte-identical to pristine `HEAD`
+in an isolated worktree — all in `test_topsailai_hooks` (missing `pytest-asyncio`) and
+one mock-server timing file, none related to this change.
+
+Deployments that relied on silence must now set `TOPSAILAI_PRINT_ENABLED=0` explicitly.
