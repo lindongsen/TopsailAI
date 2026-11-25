@@ -232,6 +232,17 @@ class ContentProgress(ContentSender):
     The display is refreshed in place with \\r to avoid flooding stdout.
     A final newline is emitted when the stream ends so later logs are not
     overwritten.
+
+    This class writes to sys.stdout directly and deliberately does NOT go
+    through print_with_time(), so it is not subject to is_print_enabled().
+    That bypass is intentional: this is a liveness signal, not narrative,
+    and it is installed only when is_need_print() is true. Keeping it
+    independent means a run whose narrative gate is closed still shows that
+    the model is producing tokens instead of appearing frozen.
+
+    Do not route this output through the narrative gate. Doing so would
+    leave a closed-gate run with no visible output at all, which is the
+    opposite of what an operator needs when diagnosing a background agent.
     """
     # Default refresh interval in seconds.
     DEFAULT_REFRESH_INTERVAL = 0.1

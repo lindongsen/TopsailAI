@@ -152,6 +152,12 @@ def get_ai_agent(
     agent.agent_type = agent_type_name or agent_type.AGENT_NAME
     agent.agent_role = get_agent_role(agent_role)
 
+    # Install the streaming progress indicator when the framework may display
+    # anything at all. is_need_print() is used here rather than
+    # is_print_enabled() on purpose: the indicator is a liveness signal, not
+    # narrative, so it must survive a closed narrative gate. Otherwise a
+    # non-interactive run with TOPSAILAI_PRINT_ENABLED unset would show
+    # nothing while the model is actively producing tokens.
     if env_tool.is_need_print():
         if env_tool.EnvReaderInstance.check_bool("LLM_RESPONSE_STREAM"):
             agent.runtime.llm_model.content_senders.append(ContentProgress())

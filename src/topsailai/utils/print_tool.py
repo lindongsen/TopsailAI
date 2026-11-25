@@ -471,6 +471,12 @@ def print_with_time(msg, need_format=False, color_kind=None, color_enabled=None)
     - The message content
     """
     from . import env_tool
+    # Narrative gate only. Display-only components such as ContentProgress
+    # deliberately bypass this check and are gated by is_need_print() instead,
+    # so a run with narrative printing closed still shows a liveness signal.
+    # Non-interactive mode is not a request for silence: a background run is
+    # expected to set TOPSAILAI_PRINT_ENABLED=1 so this gate stays open while
+    # input prompts stay off.
     if not env_tool.is_print_enabled():
         return
 
