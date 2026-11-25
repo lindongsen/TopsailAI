@@ -152,9 +152,9 @@ func (r *processRunner) invokeStream(parent context.Context, request providercli
 	validator, err := providercli.NewStreamValidator(request.RequestID)
 	if err != nil {
 		_ = killProcessGroup(command)
-		_ = command.Wait()
+		waitErr := waitOwnedProcess(ctx, command)
 		<-stderrDone
-		return err
+		return errors.Join(err, waitErr)
 	}
 	scanErr := r.scanStream(stdout, validator, accept)
 	if scanErr != nil {
@@ -274,12 +274,21 @@ func waitOwnedProcess(ctx context.Context, command *exec.Cmd) error {
 	go func() { waited <- command.Wait() }()
 	select {
 	case err := <-waited:
+		if processGroupAlive(command) {
+			_ = killProcessGroup(command)
+			if cleanupErr := waitForProcessGroupExit(command, processCleanupWait); cleanupErr != nil {
+				return errors.Join(err, fmt.Errorf("provider helper cleanup: %w", cleanupErr))
+			}
+			return errors.Join(err, errors.New("provider helper process leaked after completion"))
+		}
 		return err
 	case <-ctx.Done():
 		_ = killProcessGroup(command)
 		select {
 		case err := <-waited:
-			_ = waitForProcessGroupExit(command, processCleanupWait)
+			if cleanupErr := waitForProcessGroupExit(command, processCleanupWait); cleanupErr != nil {
+				return errors.Join(fmt.Errorf("provider invocation cancelled: %w: %v", ctx.Err(), err), fmt.Errorf("provider helper cleanup: %w", cleanupErr))
+			}
 			return fmt.Errorf("provider invocation cancelled: %w: %v", ctx.Err(), err)
 		case <-time.After(processCleanupWait):
 			return fmt.Errorf("provider process did not exit after cancellation: %w", ctx.Err())
