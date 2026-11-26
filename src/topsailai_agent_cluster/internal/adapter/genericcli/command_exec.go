@@ -25,18 +25,27 @@ import (
 // somewhere the operator never selected, which is a silent wrong-place execution
 // instead of a visible failure.
 func (a *Adapter) executeCommand(ctx context.Context, intent protocol.ImmutableIntent) (adapter.ExecuteResult, error) {
-	payload, code, err := commandexec.DecodeRequest(intent)
+	payload, payloadCode, err := commandexec.DecodeRequest(intent)
 	if err != nil {
-		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, code)}, err
+		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, payloadCode)}, err
 	}
-	var directory string
+	// The two directory sources report different codes, because the remedy
+	// differs. A session directory comes from provider evidence, so its absence
+	// means the provider could not name a usable location for that session. The
+	// Endpoint directory comes from Endpoint configuration, so its absence means
+	// the operator has to configure a setting. Reporting one code for both made
+	// the endpoint-scope form name a session directory it never addressed, which
+	// sent the investigation to the wrong component.
+	var directory, directoryCode string
 	if intent.Target == nil {
 		directory, err = commandexec.ConfiguredDirectory(a.config.CommandDir)
+		directoryCode = protocol.CommandDirectoryUnavailable
 	} else {
 		directory, err = a.sessionCommandDirectory(ctx, *intent.Target)
+		directoryCode = protocol.CommandSessionDirectoryUnavailable
 	}
 	if err != nil {
-		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, "session_directory_unavailable")}, err
+		return adapter.ExecuteResult{Receipt: commandexec.FailedReceipt(intent, directoryCode)}, err
 	}
 	return commandexec.Execute(ctx, a.commands, intent, payload, directory)
 }

@@ -1,6 +1,7 @@
 package packaging_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -702,18 +703,58 @@ func TestDebPackagesCarryAMonotonicEpoch(t *testing.T) {
 		}
 	}
 
-	// Every package that pins the node version exactly must carry the same epoch
-	// in the pin. A pin without the epoch never matches the installed node
-	// package and dpkg refuses the install. The config packages pin it too, so
-	// they belong in this check rather than only the binary packages.
+	// Every package that depends on the node package must declare the same
+	// compatibility window, and the window must carry the epoch. A bound without
+	// the epoch never matches the installed node package and dpkg refuses the
+	// install. The config packages depend on it too, so they belong in this check
+	// rather than only the binary packages.
+	//
+	// The dependency is a window rather than an exact pin so a patch release
+	// installs alone. Asserting the window here is what keeps that property from
+	// silently reverting to `=`: an exact pin still satisfies a "names the node
+	// package" check, so a weaker assertion would not notice.
+	floor, ceiling := debCompatWindow(t, epoch)
 	for _, role := range []string{"server", "endpoint", "config-server", "config-endpoint"} {
-		pin := "agent-cluster-node (= " + epoch + ":"
-		if !strings.Contains(packages[role].depends, pin) {
-			t.Fatalf("the %s package Depends %q does not pin the node version with the "+
-				"epoch (%q); the pin would never match the installed node package",
-				role, packages[role].depends, pin)
+		for _, bound := range []string{
+			"agent-cluster-node (>= " + floor + ")",
+			"agent-cluster-node (<< " + ceiling + ")",
+		} {
+			if !strings.Contains(packages[role].depends, bound) {
+				t.Fatalf("the %s package Depends %q does not carry the bound %q;\n"+
+					"an exact pin forces every sibling package to be rebuilt at the same "+
+					"version, so a one-line patch cannot be installed alone",
+					role, packages[role].depends, bound)
+			}
 		}
 	}
+}
+
+// debCompatWindow returns the compatibility window the packages must declare for
+// the node package, derived from the version the packaging tests build with.
+//
+// It is derived rather than hardcoded so a change to debTestVersion does not
+// require editing every assertion, and so the test states the rule instead of one
+// instance of it.
+func debCompatWindow(t *testing.T, epoch string) (floor, ceiling string) {
+	t.Helper()
+	base := debTestVersion
+	if index := strings.Index(base, "-"); index >= 0 {
+		base = base[:index]
+	}
+	parts := strings.Split(base, ".")
+	if len(parts) < 2 {
+		t.Fatalf("the test version %q is not major.minor.patch", debTestVersion)
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		t.Fatalf("the test version %q has a non-numeric major: %v", debTestVersion, err)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		t.Fatalf("the test version %q has a non-numeric minor: %v", debTestVersion, err)
+	}
+	return fmt.Sprintf("%s:%d.%d.0", epoch, major, minor),
+		fmt.Sprintf("%s:%d.%d.0", epoch, major, minor+1)
 }
 
 // TestDebConfigPackageNamesCarryTheSite proves a config package name carries the
@@ -749,15 +790,35 @@ func TestDebConfigPackageNamesCarryTheSite(t *testing.T) {
 	}
 
 	// The binary packages must keep depending on the unsuffixed name, so a
-	// generic package never names a site.
-	for role, want := range map[string]string{
-		"endpoint": "agent-cluster-config-endpoint (= ",
-		"server":   "agent-cluster-config-server (= ",
+	// generic package never names a site. The bound is a window for the same
+	// reason the node dependency is: a patch release of the binary package must
+	// install without rebuilding the site config package, which carries the
+	// node's identity and TLS material and is therefore the most expensive
+	// artifact to rebuild.
+	//
+	// The epoch is read from the built node package rather than assumed, so this
+	// test keeps checking the real window if the epoch is ever raised again.
+	nodeVersion := packages["node"].version
+	epochIndex := strings.Index(nodeVersion, ":")
+	if epochIndex < 0 {
+		t.Fatalf("the node package version %q carries no epoch", nodeVersion)
+	}
+	floor, ceiling := debCompatWindow(t, nodeVersion[:epochIndex])
+	for role, name := range map[string]string{
+		"endpoint": "agent-cluster-config-endpoint",
+		"server":   "agent-cluster-config-server",
 	} {
-		if !strings.Contains(packages[role].depends, want) {
-			t.Fatalf("the %s package Depends %q does not name the unsuffixed config "+
-				"package %q; a generic binary package must not depend on a site",
-				role, packages[role].depends, want)
+		for _, bound := range []string{
+			name + " (>= " + floor + ")",
+			name + " (<< " + ceiling + ")",
+		} {
+			if !strings.Contains(packages[role].depends, bound) {
+				t.Fatalf("the %s package Depends %q does not carry the bound %q;\n"+
+					"a generic binary package must depend on the unsuffixed config "+
+					"package within the compatibility window, never on a site and never "+
+					"on one exact version",
+					role, packages[role].depends, bound)
+			}
 		}
 	}
 }

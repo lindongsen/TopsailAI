@@ -162,8 +162,14 @@ command to be refused rather than executed must send a positive deadline that ha
 
 A command record separates lifecycle from provider evidence. It carries `command_id`,
 `request_hash`, `endpoint_id`, `operation`, `status`, `phase`, `delivery_boundary`,
-`effect_certainty`, `exit_confirmed`, `error_code`, `provider_response`,
+`effect_certainty`, `exit_confirmed`, `error_code`, `error_message`, `provider_response`,
 `provider_response_truncated`, `deadline_at_ms` and `create_at_ms`.
+
+`error_message` is the Endpoint's own explanation of a refusal, stored verbatim and omitted when
+the Endpoint supplied none. It is separate from `error_code` because the two answer different
+questions: the code is the stable machine classification, while the message names the setting or
+the evidence that was missing. A refusal that carried only a code left the operator with a symptom
+and no remedy, which is why the message is persisted rather than discarded at the storage boundary.
 
 `provider_response` is the provider's own return document, bounded to 64 KiB, stored and returned
 verbatim. The Server never parses it. `provider_response_truncated` marks a shortened document so a

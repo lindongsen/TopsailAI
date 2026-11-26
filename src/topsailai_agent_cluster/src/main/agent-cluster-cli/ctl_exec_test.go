@@ -491,3 +491,86 @@ func TestExecHelpAdvertisesTheEndpointForm(t *testing.T) {
 		}
 	}
 }
+
+// TestExecCommandExplainsAYesWrittenAfterTheSeparator proves the confirmation
+// refusal names the placement instead of repeating the advice the operator
+// already followed.
+//
+// Everything after "--" is literal argv by contract, so a "--yes" written there
+// is a command argument and the command is genuinely unconfirmed. The fixed
+// sentence "rerun with --yes" is wrong in that case: it tells the operator to add
+// a flag they already wrote, so the natural next step is to add it again rather
+// than to move it. The assertion is on the placement wording and on the argv
+// being unchanged, because a hint that rewrote the tail would change what the
+// operator asked to run.
+func TestExecCommandExplainsAYesWrittenAfterTheSeparator(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	err := execCommand(context.Background(), stub, &strings.Builder{}, []string{"exec", "ep", "--", "ls", "--yes"}, false, false, 100, "")
+	if err == nil {
+		t.Fatal("an unconfirmed exec was accepted")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "confirmation required for exec") {
+		t.Fatalf("error = %v, want a confirmation requirement", message)
+	}
+	if !strings.Contains(message, "write --yes before --") {
+		t.Fatalf("error = %v, want the placement named", message)
+	}
+	if strings.Contains(message, "rerun with --yes") {
+		t.Fatalf("error = %v, want the fixed advice replaced rather than repeated", message)
+	}
+	if len(stub.intents) != 0 {
+		t.Fatalf("unconfirmed exec admitted %d commands", len(stub.intents))
+	}
+}
+
+// TestExecCommandKeepsTheFixedAdviceWithoutAYesInTheArgv proves the hint is
+// conditional, so an ordinary unconfirmed invocation keeps the previous message.
+//
+// A hint that fired on every refusal would replace a correct sentence with an
+// irrelevant one, and the operator would be told to move a flag they never wrote.
+func TestExecCommandKeepsTheFixedAdviceWithoutAYesInTheArgv(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	err := execCommand(context.Background(), stub, &strings.Builder{}, []string{"exec", "ep", "--", "ls"}, false, false, 100, "")
+	if err == nil {
+		t.Fatal("an unconfirmed exec was accepted")
+	}
+	if !strings.Contains(err.Error(), "rerun with --yes") {
+		t.Fatalf("error = %v, want the unchanged advice", err)
+	}
+	if strings.Contains(err.Error(), "write --yes before --") {
+		t.Fatalf("error = %v, want no placement hint when the argv carries no yes", err)
+	}
+}
+
+// TestExecCommandKeepsAYesInTheArgvWhenConfirmed proves the tail is never
+// rewritten, so a command that legitimately takes "--yes" still receives it.
+//
+// "exec ep -- apt-get install --yes pkg" is a real invocation: the global --yes
+// before the command word confirms, and the --yes after the separator belongs to
+// apt-get. A hint implementation that stripped the tail would silently change the
+// command the operator asked to run, which is why the hint only inspects the tail
+// for the spelling and never edits it.
+func TestExecCommandKeepsAYesInTheArgvWhenConfirmed(t *testing.T) {
+	stub := ctlExecStubFor(protocol.Capability{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion})
+	args := []string{"exec", "ep", "--", "apt-get", "install", "--yes", "pkg"}
+	if err := execCommand(context.Background(), stub, &strings.Builder{}, args, true, false, 100, ""); err != nil {
+		t.Fatalf("execCommand: %v", err)
+	}
+	if len(stub.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(stub.intents))
+	}
+	var request protocol.CommandExecRequest
+	if err := json.Unmarshal(stub.intents[0].Payload, &request); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	want := []string{"apt-get", "install", "--yes", "pkg"}
+	if len(request.Argv) != len(want) {
+		t.Fatalf("argv = %q, want %q", request.Argv, want)
+	}
+	for index := range want {
+		if request.Argv[index] != want[index] {
+			t.Fatalf("argv = %q, want %q", request.Argv, want)
+		}
+	}
+}

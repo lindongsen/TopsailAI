@@ -112,6 +112,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// selected a session, so the interactive default is resolved after parsing
 	// instead of being baked into the flag.
 	lines := flags.Int("lines", 100, "maximum number of output lines returned by logs; interactive mode defaults to 300 and accepts 100-1000")
+	// -n is the short spelling of --lines. Both surfaces accept it, so an
+	// operator who learned it in the interactive REPL can use it here too. It is a
+	// separate flag rather than an alias entry because Go's flag package has no
+	// alias mechanism, and the two spellings are reconciled after parsing so they
+	// can never disagree about one quantity. Before this existed, help advertised
+	// "-n, --lines" while only --lines was registered, so a documented flag could
+	// not run and the misplaced form was read as a positional.
+	linesShort := flags.Int("n", 0, "short form of --lines")
 	follow := flags.Bool("follow", false, "stream output records until interrupted; logs only")
 	// -f is the short spelling of --follow. Both surfaces accept it, so an
 	// operator who learned it in the interactive REPL can use it here too.
@@ -181,6 +189,14 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		return version.Write(output, "agent-cluster-cli")
 	}
 	if err := flags.Parse(hoistTrailingFlags(args)); err != nil {
+		return err
+	}
+	// The two spellings of the output line budget are reconciled before any
+	// command or the REPL reads it, so -n and --lines can never disagree about one
+	// quantity. This runs before the interactive branch because the REPL resolves
+	// its own default from the same value.
+	lineBudget, err := reconcileLines(flags, *lines, *linesShort)
+	if err != nil {
 		return err
 	}
 	// The output boundary owns the truncation and colour policy, so every render
@@ -264,7 +280,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 		}
 		// The budget is validated before the editor takes the terminal, so a
 		// rejected startup value never leaves the screen in raw mode.
-		interactiveLines, err := resolveInteractiveLines(flags, *lines)
+		interactiveLines, err := resolveInteractiveLines(flags, lineBudget)
 		if err != nil {
 			return err
 		}
@@ -293,7 +309,7 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 	// negative bound would therefore silently widen the result instead of
 	// narrowing it, and the operator would see a complete conversation while
 	// believing it was bounded.
-	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *maxTokens, *maxTokensShort, *historyLimit, *maxBytes, *lines); err != nil {
+	if err := rejectNegativeNumericFlags(*maxChars, *maxCharsShort, *maxTokens, *maxTokensShort, *historyLimit, *maxBytes, lineBudget); err != nil {
 		return err
 	}
 	// The two spellings of the per-message bound are reconciled into one value
@@ -453,9 +469,9 @@ func runWithIO(args []string, input io.Reader, output, errors io.Writer, termina
 			// itself, or Ctrl-C would be swallowed and the stream would never end.
 			followCtx, stopFollow := interruptContext(ctx, interrupts)
 			defer stopFollow()
-			return followLogs(followCtx, api, output, flags.Arg(1), flags.Arg(2), *generation, *maxBytes, *lines, *jsonMode, color)
+			return followLogs(followCtx, api, output, flags.Arg(1), flags.Arg(2), *generation, *maxBytes, lineBudget, *jsonMode, color)
 		}
-		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, *lines, *jsonMode, color)
+		return logs(ctx, api, output, flags.Arg(1), flags.Arg(2), *maxBytes, lineBudget, *jsonMode, color)
 	case "status":
 		if flags.NArg() != 2 {
 			return fmt.Errorf("usage: status <command-id>")
@@ -593,12 +609,17 @@ func resolveInteractiveSelection(shortFlag bool, args []string) (bool, error) {
 // who asked for more lines than the REPL will render must not be shown a shorter
 // tail that looks complete.
 //
+// Both spellings count as explicit. -n is the short form of --lines, so a REPL
+// started with "-n 50" must be rejected for the same reason "--lines 50" is,
+// instead of silently receiving the interactive default because only the long
+// name was inspected.
+//
 // The standalone surface keeps its own default, so this resolver is only called
 // once the invocation is known to enter the REPL.
 func resolveInteractiveLines(flags *flag.FlagSet, value int) (int, error) {
 	explicit := false
 	flags.Visit(func(f *flag.Flag) {
-		if f.Name == "lines" {
+		if f.Name == "lines" || f.Name == "n" {
 			explicit = true
 		}
 	})
@@ -655,6 +676,35 @@ func reconcileMaxChars(maxChars, maxCharsShort int) (int, error) {
 		return maxCharsShort, nil
 	}
 	return maxChars, nil
+}
+
+// reconcileLines folds the two spellings of the output line budget into one value,
+// so -n and --lines can never disagree about one quantity.
+//
+// This differs from reconcileMaxChars because --lines carries a default, so a
+// value comparison cannot tell "not supplied" from "supplied the default". The
+// explicit-set record from the parser is therefore the only reliable signal, and
+// it is read here rather than at each call site so both spellings are judged the
+// same way. Two different stated values are rejected instead of resolved by
+// precedence, because either choice would silently ignore a bound the operator
+// stated.
+func reconcileLines(flags *flag.FlagSet, lines, linesShort int) (int, error) {
+	longSet, shortSet := false, false
+	flags.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "lines":
+			longSet = true
+		case "n":
+			shortSet = true
+		}
+	})
+	if longSet && shortSet && lines != linesShort {
+		return 0, fmt.Errorf("--lines %d and -n %d disagree; state the bound once", lines, linesShort)
+	}
+	if shortSet {
+		return linesShort, nil
+	}
+	return lines, nil
 }
 
 // reconcileSessionHandle folds the two spellings of the resume session handle into
@@ -743,7 +793,7 @@ var globalOptionNames = map[string]bool{
 	"auth-mode":       true,
 	"server-profile":  true,
 	"endpoint-token":  true,
-	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "no-color": true,
+	"wait-timeout-ms": true, "max-bytes": true, "lines": true, "n": true, "no-color": true,
 	"no-progress": true, "no-truncate": true, "limit": true, "max-chars": true, "c": true,
 	"max-tokens": true, "t": true,
 	"profile": true, "profile-revision": true, "folder": true, "task": true,

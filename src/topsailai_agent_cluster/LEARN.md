@@ -2244,3 +2244,28 @@ tested and hardened, while the JSON form is the one a script emits and nobody ex
 are documented as the same command, so a caller reasonably expects the same validation. The failure is
 also safe, which is exactly why it survives: nothing bad happens, so no incident forces the
 comparison, and the only symptom is an error that arrives one layer later than it should.
+
+## `dpkg --dry-run -i` does not check dependencies, so it cannot prove a pin is satisfiable
+
+Trigger: while replacing exact sibling pins with a compatibility window, `dpkg --dry-run -i` was
+used as the proof that a `1.5.0-2` package installs against an installed `1.5.0-1` node package. It
+exited 0, which looked like the decisive evidence. It was not evidence at all: a deliberately built
+control package pinning `agent-cluster-node (= 2:1.5.0-2)` also exited 0 in the same state, even
+though that dependency is unsatisfiable. `dpkg --dry-run` simulates only the unpack phase, and
+dependency resolution happens at configure, so the command answers "can this archive be unpacked",
+never "can this package be installed".
+
+Action: prove dependency satisfiability with a real solver, `apt-get -s install <deb>`, and read the
+verdict rather than the exit code. The unsatisfiable control package reports
+`Depends: agent-cluster-node (= 2:1.5.0-2) but 2:1.5.0-1 is to be installed` and
+`E: Unable to correct problems, you have held broken packages`, while the windowed package reports a
+single `Inst` line naming only itself. Always run the negative control in the same state: a probe that
+has never been seen to fail cannot distinguish "the dependency is satisfied" from "the dependency was
+never checked".
+
+Why this prevents recurrence: `--dry-run` is the flag that looks purpose-built for a safe install
+test, and its exit status is the value every script trusts. The failure direction is the dangerous
+one: it returns success for a package that cannot be installed, so a broken dependency graph is
+certified as correct and the defect surfaces later as a refused install on a node. The negative
+control is what separates "the solver accepted it" from "no solver ran", and it costs one extra
+package build.

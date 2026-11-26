@@ -268,6 +268,15 @@ func renderCommandExecResult(out io.Writer, result map[string]any, policy ColorP
 		return err
 	}
 	receipt := ReceiptForStatus(result)
+	// The message carries the remedy, so a refusal that names only a code leaves
+	// the operator with a symptom and no next step. It is printed only when the
+	// Endpoint supplied one, which keeps a receipt without a message byte-identical
+	// to the previous output.
+	if receipt.ErrorMessage != "" {
+		if _, err := fmt.Fprintf(out, "ErrorMessage: %s\n", receipt.ErrorMessage); err != nil {
+			return err
+		}
+	}
 	if receipt.ProviderResponse == "" {
 		return nil
 	}

@@ -200,6 +200,12 @@ func (r CommandRunner) Show(ctx context.Context, out io.Writer, id string, jsonM
 
 // Logs retrieves and renders a bounded output snapshot. color decides whether
 // provider SGR colour survives; every other escape sequence is always stripped.
+//
+// Both output forms read through readSnapshot, so a failed read is reported as a
+// failure whichever form the caller asked for. The JSON form used to render the
+// snapshot directly, which meant an error code reached stdout as a document and
+// the process exited 0: a script that checked the exit status read a failed read
+// as an empty successful one.
 func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, resourceID string, maxBytes, maxLines int, jsonMode bool, color ColorPolicy) error {
 	report, err := r.API.GetInventory(ctx, endpointID)
 	if err != nil {
@@ -213,14 +219,37 @@ func (r CommandRunner) Logs(ctx context.Context, out io.Writer, endpointID, reso
 			break
 		}
 	}
+	request := protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines}
+	snapshot, err := r.readSnapshot(ctx, request)
+	if err != nil {
+		return err
+	}
 	if jsonMode {
-		snapshot, err := r.getOutput(ctx, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines})
-		if err != nil {
-			return err
-		}
 		return RenderJSON(out, snapshot)
 	}
-	return r.renderSessionSnapshotRequest(ctx, out, protocol.OutputSnapshotRequest{EndpointID: endpointID, ResourceID: resourceID, ProviderGeneration: generation, ProviderTarget: providerTarget, MaxBytes: maxBytes, MaxLines: maxLines}, color)
+	RenderSnapshotStyled(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines, color)
+	return nil
+}
+
+// readSnapshot performs one output read and converts an error code into a
+// failure, so every caller reports a failed read the same way.
+//
+// An error code is a failure, not content. Every producer of this field sets it
+// only on a failure path (invalid_target, unknown_resource, unknown_adapter,
+// generation_mismatch, unsupported, provider_error, policy_denied), so no
+// legitimate result is converted into an error here. The guard lives in one place
+// because two render paths that each check it will eventually disagree, and the
+// disagreement is invisible: the form that forgot the check still prints a
+// well-formed document.
+func (r CommandRunner) readSnapshot(ctx context.Context, request protocol.OutputSnapshotRequest) (protocol.OutputSnapshotResponse, error) {
+	snapshot, err := r.getOutput(ctx, request)
+	if err != nil {
+		return protocol.OutputSnapshotResponse{}, err
+	}
+	if snapshot.ErrorCode != "" {
+		return protocol.OutputSnapshotResponse{}, fmt.Errorf("output snapshot failed: %s", snapshot.ErrorCode)
+	}
+	return snapshot, nil
 }
 
 // RenderSessionSnapshot reads and renders one bounded output snapshot for an
@@ -238,24 +267,11 @@ func (r CommandRunner) getOutput(ctx context.Context, request protocol.OutputSna
 }
 
 func (r CommandRunner) renderSessionSnapshotRequest(ctx context.Context, out io.Writer, request protocol.OutputSnapshotRequest, color ColorPolicy) error {
-	maxLines := request.MaxLines
-	snapshot, err := r.getOutput(ctx, request)
+	snapshot, err := r.readSnapshot(ctx, request)
 	if err != nil {
 		return err
 	}
-	// An error code is a failure, not content. It is returned as an error so the
-	// process exits non-zero and the operator learns what failed. Writing it to
-	// stdout and returning nil made a failed read indistinguishable from a
-	// successful one whose body happened to be the code word, which is the shape
-	// the coding requirement forbids: a caller must never be able to mistake a
-	// failure for success. Every producer of this field sets it only on a failure
-	// path (invalid_target, unknown_resource, unknown_adapter, generation_mismatch,
-	// unsupported, provider_error, policy_denied), so no legitimate result is
-	// converted into an error here.
-	if snapshot.ErrorCode != "" {
-		return fmt.Errorf("output snapshot failed: %s", snapshot.ErrorCode)
-	}
-	RenderSnapshotStyled(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, maxLines, color)
+	RenderSnapshotStyled(out, snapshot.ObservedAtMS, snapshot.Data, snapshot.Truncated, request.MaxLines, color)
 	return nil
 }
 

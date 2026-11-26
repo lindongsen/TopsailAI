@@ -605,9 +605,11 @@ Two properties are worth stating because they are easy to get wrong:
 `--follow` it is a stream, and the two forms are different capabilities rather than
 two spellings of one behaviour.
 
-- Standalone: `agent-cluster-cli [options] [--lines <lines>] [--follow] logs <endpoint> <session>`.
+- Standalone: `agent-cluster-cli [options] [-n <lines>] [--lines <lines>] [--follow] logs <endpoint> <session>`.
   The stream runs until the process is interrupted, because a non-interactive caller
   has no terminal to observe a keypress. An interrupt is a normal stop, not a failure.
+  `-n` and `--lines` are two spellings of one bound, so stating both with different
+  values is refused instead of silently resolved to one of them.
 - Interactive: `logs [-n <lines>] [-f|--follow] [session]`. The stream runs until any
   key is pressed, reusing the same watch seam that stops an auto-refresh loop, so the
   editor remains the only writer to the terminal.

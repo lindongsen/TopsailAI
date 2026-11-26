@@ -259,3 +259,107 @@ func TestSessionDirectoryRejectsARelativeWorkspace(t *testing.T) {
 		t.Fatal("a regular file was accepted as a session directory")
 	}
 }
+
+// commandExecEndpointAdapter builds an adapter for the endpoint-scope form, which
+// carries no target and therefore resolves its directory from Endpoint
+// configuration instead of from provider evidence.
+//
+// The command directory is a parameter because the two cases under test differ
+// only in that value: an empty directory must be refused, and a configured one
+// must run. A helper that hardcoded either value could only prove one half.
+func commandExecEndpointAdapter(t *testing.T, provider *fakeRunner, commands *recordingCommandRunner, commandDir string) *Adapter {
+	t.Helper()
+	limits := providercli.ConcurrencyLimits{Total: 2, Discovery: 1, Mutation: 1, Follow: 1}
+	config := Config{
+		AdapterID: "a", DisplayName: "A", Timeout: time.Second,
+		MaxStdinBytes: 65536, MaxStdoutBytes: 65536, MaxStderrBytes: 4096, MaxRecords: 10,
+		EndpointLimits: limits, AdapterLimits: limits,
+		Mapper:        &fakeMapper{mappings: map[string]adapter.ResourceMapping{}},
+		Capabilities:  protocol.CapabilityDescriptor{Revision: "r", Capabilities: []protocol.Capability{{Name: protocol.OperationCommandExec, Version: protocol.CommandExecPayloadVersion}}},
+		CommandRunner: commands,
+		CommandDir:    commandDir,
+	}
+	binding, err := newWithRunner(context.Background(), config, runnerAdapter{provider})
+	if err != nil {
+		t.Fatalf("new adapter: %v", err)
+	}
+	return binding
+}
+
+// TestExecuteRefusesEndpointCommandExecWithoutACommandDirectory proves the
+// endpoint-scope form reports its own refusal code rather than the session one.
+//
+// The two directory sources are different authorities. A session directory comes
+// from provider evidence, so its absence is a fact about that session. The
+// Endpoint directory comes from Endpoint configuration, so its absence is a
+// setting the operator must supply. Reporting session_directory_unavailable for
+// this form named a session directory the request never addressed, which sent the
+// investigation to the wrong component and hid the setting that was missing.
+func TestExecuteRefusesEndpointCommandExecWithoutACommandDirectory(t *testing.T) {
+	provider := newFakeProvider(t)
+	commands := &recordingCommandRunner{}
+	binding := commandExecEndpointAdapter(t, provider, commands, "")
+	payload, err := json.Marshal(protocol.CommandExecRequest{Argv: []string{"ls"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "cmd-endpoint-1", Operation: protocol.OperationCommandExec, OperationVersion: protocol.CommandExecPayloadVersion,
+		Payload: payload, Target: nil,
+		Budget: protocol.Budget{CLITimeoutMS: 5000}, ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli(),
+	}})
+	if err == nil {
+		t.Fatal("the endpoint form ran without a configured command directory")
+	}
+	if commands.calls != 0 {
+		t.Fatalf("local command runs = %d, want 0", commands.calls)
+	}
+	if result.Receipt.ErrorCode != protocol.CommandDirectoryUnavailable {
+		t.Fatalf("receipt = %+v, want %q", result.Receipt, protocol.CommandDirectoryUnavailable)
+	}
+	if result.Receipt.ErrorCode == protocol.CommandSessionDirectoryUnavailable {
+		t.Fatal("the endpoint form reported a session directory it never addressed")
+	}
+	if result.Receipt.EffectCertainty != protocol.EffectNotApplied {
+		t.Fatalf("effect certainty = %q, want not applied", result.Receipt.EffectCertainty)
+	}
+}
+
+// TestExecuteRunsEndpointCommandExecInTheConfiguredDirectory proves the endpoint
+// form is reachable, not merely refused.
+//
+// Without this case the refusal test above would pass for an implementation that
+// rejected every endpoint-scope request, which is the defect the issue reported.
+// The assertion is on the directory the runner received, because a test that only
+// checked the receipt would pass while the call site still passed an empty path.
+func TestExecuteRunsEndpointCommandExecInTheConfiguredDirectory(t *testing.T) {
+	provider := newFakeProvider(t)
+	commands := &recordingCommandRunner{outcome: commandexec.Outcome{Stdout: []byte("ok\n"), ExitCode: 0}}
+	directory := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	binding := commandExecEndpointAdapter(t, provider, commands, resolved)
+	payload, err := json.Marshal(protocol.CommandExecRequest{Argv: []string{"ls"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	result, err := binding.Execute(context.Background(), adapter.ExecuteRequest{Intent: protocol.ImmutableIntent{
+		CommandID: "cmd-endpoint-2", Operation: protocol.OperationCommandExec, OperationVersion: protocol.CommandExecPayloadVersion,
+		Payload: payload, Target: nil,
+		Budget: protocol.Budget{CLITimeoutMS: 5000}, ExecuteBeforeAtMS: time.Now().Add(time.Minute).UnixMilli(),
+	}})
+	if err != nil {
+		t.Fatalf("execute endpoint command.exec: %v", err)
+	}
+	if commands.calls != 1 {
+		t.Fatalf("local command runs = %d, want 1", commands.calls)
+	}
+	if commands.dir != resolved {
+		t.Fatalf("directory = %q, want the configured %q", commands.dir, resolved)
+	}
+	if result.Receipt.ExitConfirmed != true {
+		t.Fatalf("receipt = %+v, want a confirmed exit", result.Receipt)
+	}
+}

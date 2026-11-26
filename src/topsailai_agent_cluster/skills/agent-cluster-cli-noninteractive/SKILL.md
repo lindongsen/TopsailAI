@@ -6,7 +6,7 @@ author: DawsonLin
 license: Apache-2.0
 metadata:
   tags: [agent-cluster, cli, non-interactive, automation, json, scripting]
-  related_skills: [agent-cluster-watch-trigger]
+  related_skills: [agent-cluster-cli-interactive, agent-cluster-watch-trigger]
 ---
 
 # Agent Cluster CLI Non-Interactive Mode
@@ -25,10 +25,12 @@ standalone surface does not.
 
 Two properties decide how you must use this surface:
 
-- **A rejected command still exits `0`.** The durable receipt is the authority, not the exit
-  status. A command that the Endpoint refused (`target_still_active`, `generation_required`,
-  `target_generation_mismatch`, `policy_denied`) prints `failed` and exits `0`. Always read
-  `status` / `error_code` from the receipt or the `--json` document.
+- **A rejected command still exits `0`, but a missing target exits `2`.** The durable receipt is the
+  authority, not the exit status. A command that the Endpoint refused (`target_still_active`,
+  `generation_required`, `target_generation_mismatch`, `policy_denied`) prints `failed` and exits
+  `0`. A command whose target does not exist never produces a receipt and exits `2`. Always read
+  `status` / `error_code` from the receipt or the `--json` document, and read the message before
+  treating exit `2` as a syntax error.
 - **Diagnostics go to stderr, data goes to stdout.** The resolved Server profile line
   (`using server profile "primary" (http://...)`) is written to stderr, so `--json` output on
   stdout stays parseable.
@@ -47,7 +49,56 @@ Use this skill when the task is to:
   rules.
 
 Do not use this skill for the interactive REPL, for row-number selection, for `cd`/scope
-navigation, for `watch`, or for the `!` command prefix. Those exist only interactively.
+navigation, for `watch`, or for the `!` command prefix. Those exist only interactively, and they are
+covered by `agent-cluster-cli-interactive`.
+
+## The Daily Workflow: What Did the Agent Just Do
+
+The most common question is "what did this agent just do", and it needs two reads with **opposite
+identifier rules**. One `--json list` read resolves both identifiers, so no lookup is repeated.
+
+```bash
+# 1. Resolve both identifiers in one read
+agent-cluster-cli --json list 2>/dev/null \
+  | jq -r '.[] | [.endpoint_id,.cluster_session_id,.provider_session_id,.provider_generation] | @tsv'
+```
+
+```text
+ac.ai-dev	res_50da448edfd53f9b19032af9354c290e	20261123131848	636422598
+```
+
+```bash
+# 2. Conversation: the PROVIDER session ID, and it is oldest-first, so tail it
+agent-cluster-cli --json messages ac.ai-dev 20261123131848 -c 2000 2>/dev/null \
+  | jq -r '.messages[-2:][] | "--- #\(.no) \(.role) ---\n\(.content)"'
+
+# 3. Recent output: the CLUSTER resource ID; -n and --lines are the same bound
+agent-cluster-cli --json logs ac.ai-dev res_50da448edfd53f9b19032af9354c290e -n 50 2>/dev/null \
+  | jq -r '.data'
+```
+
+| Read | Accepts | Rejects |
+|---|---|---|
+| `messages <endpoint> <session>` | the **provider session ID** (`20261123131848`) | a cluster resource ID → `invalid_target: session_id must be the provider session ID, not a cluster resource ID` |
+| `logs <endpoint> <session>` | the **cluster resource ID** (`res_50da...`) | a provider session ID → `output snapshot failed: unknown_resource` |
+
+The two mismatches do **not** fail the same way, and the difference decides whether a script notices:
+
+| Mismatch | Human output | `--json` output | Exit |
+|---|---|---|---|
+| `messages` given a cluster resource ID | `server request failed (400): invalid_target: ...` on stderr | nothing on stdout | `2` |
+| `logs` given a provider session ID | `output snapshot failed: unknown_resource` on stderr | nothing on stdout | `2` |
+
+Both forms now fail the same way, because one shared guard performs the read and the check before
+either renderer runs. A script may therefore trust the exit status for `logs`, and `--json` never
+prints a document describing a read that failed.
+
+The reason the two reads take opposite identifiers is deliberate: `messages` reads persisted provider
+data, which a stopped session still has and which is keyed by the provider's own identifier, while
+`logs` addresses a cluster resource.
+
+`messages` prints oldest first, so the newest turn is the **last** element. Reading `.messages[0]`
+answers "how did this start", not "what just happened".
 
 ## Invocation and Global Options
 
@@ -57,6 +108,12 @@ agent-cluster-cli [options] <command> [arguments]
 
 Global options may be written **before or after** the command word; the parser hoists trailing
 options. Both `--json` and `-json` are accepted.
+
+Hoisting stops at the `--` separator. Everything after `--` is literal argv by contract, so a
+global option written there is a command argument and never an option. `exec` is the command with
+that separator, and `exec ep -- apt-get install --yes pkg` is a legitimate invocation in which the
+trailing `--yes` belongs to `apt-get`. Write the confirming `--yes` before `--`, as in
+`exec <endpoint> --yes -- <argv...>`.
 
 | Option | Meaning |
 |---|---|
@@ -97,14 +154,14 @@ literal data. `exec` keeps its own `--` because the terminator is part of its sy
 | `endpoints` | `endpoints [endpoint-id]` | Registered endpoints with connection state, observation time and capability revision. Never forces discovery |
 | `show` | `show <endpoint-or-session>` | Endpoint or session detail; returns `{capabilities, command_history, endpoint, inventory, session}` |
 | `info` | `info <session-id>` | Session detail including the provider's own `provider_metadata` and `provider_runtime` documents |
-| `logs` | `logs <endpoint> <session> [--lines N] [--follow]` | Bounded output snapshot, or a live tail with `--follow` |
+| `logs` | `logs <endpoint> <session> [-n N\|--lines N] [-f\|--follow]` | Bounded output snapshot, or a live tail with `--follow`; `-n` and `--lines` are one bound |
 | `history` | `history <endpoint-id-or-hostname> [--limit N]` | Live provider session history, never a persisted projection |
 | `messages` | `messages <endpoint> <session-id> [-c N] [-t N]` | Persisted conversation; a stopped session can still be read. The session must be a provider session ID, not a cluster resource ID |
 | `project` | `project <endpoint>` | Managed projects as standard Project resources; a live provider read |
 | `model registry` | `model registry <endpoint>` | Models a launch from this endpoint can use, with the one in use marked |
 | `model` | `model <endpoint> <session> [profile]` | Model profiles one session can select. This is a live provider query and can fail with `provider_error` |
 | `status` | `status <command-id>` | Durable result of a submitted command |
-| `drive status` | `drive status <endpoint> <session>` | Standard drive state from the persisted inventory; never probes the provider; takes no generation |
+| `drive status` | `drive status <endpoint> <session>` | Standard drive state from the persisted inventory; never probes the provider; takes no generation; accepts a cluster resource ID or a provider session ID |
 
 ### Action commands
 
@@ -114,7 +171,7 @@ literal data. `exec` keeps its own `--` because the terminator is part of its sy
 | `btw` | `btw <endpoint> <resource> [text] [generation]` | `--yes` |
 | `interrupt` | `interrupt [soft\|hard] <endpoint> <resource> [message] [generation]` — the action word is its own slot; both actions accept a message; the generation travels in `--generation` only | `--yes` |
 | `ctl` (alias `control`) | `ctl <endpoint> <resource> <action> [json] [generation]` | `--yes` |
-| `exec` | `exec <endpoint> <resource> <generation> -- <argv...>` or `exec <endpoint> -- <argv...>` | `--yes` |
+| `exec` | `exec <endpoint> <resource> <generation> -- <argv...>` or `exec <endpoint> -- <argv...>`; `--yes` goes **before** `--` | `--yes` |
 | `start` | `start <endpoint> <resource> [text] [generation] --profile <id> --profile-revision <rev>` | `--yes` |
 | `resume` | `resume <endpoint> <resource> [generation]` or `resume <endpoint> -s <session-id> [--generation g]` | `--yes` |
 | `stop` | `stop <endpoint> <resource> <generation>` | `--yes` |
@@ -200,13 +257,34 @@ reporting an error.
   accepted by the cluster and then refused at the provider seam with
   `hard_interrupt does not accept a message` as `invalid_request` / `not_applied`. Treat this as a
   provider limitation rather than a syntax error, and use `soft` when a message must reach the agent.
-- **`exec` requires `--`.** Without it the command reports
+- **`exec` requires `--`, and `--yes` must come before it.** Without `--` the command reports
   `usage: exec <endpoint-id> <resource-id> <generation> -- <argv...>`. The argv array comes from
   the shell's own word splitting and is never re-tokenized. The endpoint-only form
   (`exec <endpoint> -- <argv>`) must not carry a generation.
+  A `--yes` written after `--` becomes part of the argv, so the command stays unconfirmed and the
+  refusal says `the --yes after -- is part of the command argv, so it did not confirm; write --yes
+  before --`. That wording is the signal to move the flag, not to add it again. The tail is never
+  rewritten, because `exec ep -- apt-get install --yes pkg` legitimately passes `--yes` to
+  `apt-get`.
+- **The endpoint-only form needs `AGENT_CLUSTER_ENDPOINT_COMMAND_DIR` on that Endpoint.** The form
+  addresses the machine, so its working directory comes from Endpoint configuration rather than
+  from a session. When the setting is unset the request is refused with
+  `command_directory_unavailable` and a message naming the setting; the form is then unavailable
+  until an operator configures it. This is distinct from `session_directory_unavailable`, which
+  means a session-scoped request found no usable directory in provider evidence. Do not read the
+  endpoint-scope refusal as "this endpoint has no session" — the form addresses no session by
+  design.
 - **`stop` requires a generation positionally**; `clean` does not, because an expired session
   may have no verified liveness.
 - **`drive status` takes no generation** and refuses one.
+- **`drive status` accepts a cluster resource ID or a provider session ID.** The resource ID
+  namespace is searched first, so a token that is both keeps its routing meaning; a provider session
+  ID that matches several rows is refused with the count and the remedy rather than resolved to the
+  first. `drive start` and `drive stop` still require the cluster resource ID, because they address a
+  live process and must carry a generation.
+- **`-n` and `--lines` are the same bound on both surfaces.** `logs ep res -n 3` works standalone.
+  Stating both with different values is refused with `--lines 5 and -n 3 disagree; state the bound
+  once`, because either choice would silently ignore a bound the operator stated.
 - **`resume` accepts either `-s <session-id>` or a positional resource ID, never both.** In the
   `-s` form the generation must be stated with `--generation`, because the positional slot
   belongs to the resource ID.
@@ -249,14 +327,26 @@ evidence.
 | Code | Meaning |
 |---|---|
 | `0` | Success — **and also a rejected or failed receipt**, and also `help` and `--version` |
-| `2` | Usage error, missing `--yes`, configuration error, unknown command or unknown flag |
+| `2` | Usage error, missing `--yes`, configuration error, unknown command, unknown flag, **and a target that does not exist** |
 | `130` | Interactive REPL interrupted |
+
+Three failure classes exist, and the difference decides what a script must do:
+
+| Class | Exit | Example | Meaning |
+|---|---|---|---|
+| **Receipt rejection** | `0` | `resume` on a live session → `status: rejected`, `error_code: target_still_active` | The command reached the Endpoint and was refused. The receipt is the authority |
+| **Local or transport failure** | `2` | `show no-such-endpoint` → `endpoint or session "..." was not found`; `info res_doesnotexist` → `session "..." was not found on any endpoint`; `status cmd_doesnotexist` → `server request failed (404): not_found` | The command never produced a receipt. Nothing was submitted |
+| **Read failure** | `2` | `--json logs ep <provider-session-id>` → stderr `output snapshot failed: unknown_resource`, stdout empty | The read failed. One shared guard performs the read and the check before either renderer runs, so the human and `--json` forms fail identically |
 
 Consequences you must respect:
 
 - Never treat exit `0` as proof that an action happened. Read `status` and `error_code`.
   Verified example: `resume` on a live session exits `0` with `status: rejected`,
   `error_code: target_still_active`, `effect_certainty: not_applied`.
+- A `--json` read that fails exits `2` and prints nothing on stdout, so an empty `data` field now
+  means the read succeeded and the provider had nothing to show.
+- Never treat exit `2` as proof that the command was malformed. A not-found target also exits `2`,
+  so read the message before concluding that the syntax was wrong.
 - A usage error exits `2` and writes the reason to stderr, so a script can distinguish "the
   command was malformed" from "the Endpoint refused the command".
 - A non-interactive command never silently degrades to a weaker behaviour. If the stronger
@@ -308,6 +398,12 @@ token that cannot be signed is reported as a local configuration error before an
   reported as a hidden count on stdout; `--all` includes them.
 - **Using a cluster resource ID where a provider session ID is required.** `messages` accepts
   only the provider session ID, because a stopped session has no cluster resource ID.
+- **Using a provider session ID where a cluster resource ID is required.** `logs` accepts only the
+  cluster resource ID, so `logs ep 20261123131848` fails with
+  `output snapshot failed: unknown_resource` and exits `2` in both the human and `--json` forms.
+  `drive status` is the exception among the drive actions: it also accepts a provider session ID,
+  because it reads persisted data rather than addressing a live process. The two reads take opposite
+  identifiers; see "The Daily Workflow" above.
 - **Treating `model <endpoint> <session>` as always available.** It is a live provider query and
   can fail with `provider_error`; `model registry` is the machine-level read and is the safer
   probe.
@@ -326,7 +422,9 @@ token that cannot be signed is reported as a local configuration error before an
   stderr, so `--json` on stdout stays clean. Do not merge the streams before parsing.
 - **Writing global options after a positional payload.** They are hoisted, so a flag written
   after the payload is still a flag. That is convenient, and it is also why a mutating command
-  can run when you believed you were only inspecting it.
+  can run when you believed you were only inspecting it. Hoisting stops at `--`: a flag written
+  after the separator is argv, so `exec ep -- ls --yes` runs `ls --yes` unconfirmed instead of
+  confirming the command.
 
 ## Verification Checklist
 

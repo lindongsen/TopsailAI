@@ -241,8 +241,8 @@ DEBUG_PRINT_TRUNCATE_LENGTH=3000
 TOPSAILAI_INTERACTIVE_MODE=1
 
 # Allow noninteractive framework output without enabling input prompts.
-# 0 preserves existing behavior; 1 permits printing in noninteractive mode.
-TOPSAILAI_PRINT_ENABLED=0
+# 1 (default) permits printing in noninteractive mode; 0 silences it.
+TOPSAILAI_PRINT_ENABLED=1
 
 # Terminal window title in interactive mode.
 # When 1 (default), the terminal title is set to the configured format while

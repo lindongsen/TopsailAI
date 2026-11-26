@@ -143,8 +143,27 @@ def is_interactive_mode() -> bool:
 
 
 def is_print_enabled() -> bool:
-    """Allow interactive output or an explicit noninteractive print override."""
-    return is_interactive_mode() or is_true(os.getenv("TOPSAILAI_PRINT_ENABLED", "0"))
+    """Decide whether framework narrative may be printed.
+
+    Interactive mode implies yes. A non-interactive run also prints by
+    default, because non-interactive means "do not prompt for input", not
+    "produce no output": a background run that leaves an empty stdout
+    record cannot be diagnosed afterwards.
+
+    ``TOPSAILAI_PRINT_ENABLED`` therefore defaults to enabled. Set it to
+    ``0`` to silence framework narrative in a non-interactive run; that is
+    an explicit opt-out, not the default.
+
+    This gate covers framework narrative only. Display-only components
+    such as the streaming progress indicator are gated by
+    :func:`is_need_print` instead, so they can remain visible when this
+    gate is closed; see that function for why the two are separate.
+
+    Returns:
+        bool: True when interactive mode is on or the print override is not
+            explicitly disabled.
+    """
+    return is_interactive_mode() or is_true(os.getenv("TOPSAILAI_PRINT_ENABLED", "1"))
 
 
 def is_debug_mode():
@@ -258,6 +277,39 @@ def get_input_pipe_timeout() -> float | None:
 
 
 def is_need_print() -> bool:
+    """Decide whether the framework may display anything at all.
+
+    This is deliberately NOT the same predicate as :func:`is_print_enabled`,
+    and the difference is intentional, not an oversight. The two answer
+    different questions:
+
+    - :func:`is_print_enabled` asks whether framework narrative may be
+      printed: the timestamped thought/action/tool-step lines.
+    - This function asks whether the framework may display anything,
+      including display-only components that exist purely to show
+      liveness, such as the streaming progress indicator.
+
+    Debug mode is an explicit operator request for maximum observability,
+    so it opens this broader gate even when the narrative gate is closed.
+    That is why a debug run can show a progress indicator while showing no
+    narrative lines.
+
+    Non-interactive mode must NOT be read as "produce no output".
+    Non-interactive means only that the agent does not prompt for input;
+    a background run still has to leave a usable stdout record, otherwise
+    the session artifact cannot be used to diagnose what happened.
+    ``TOPSAILAI_PRINT_ENABLED`` exists precisely to decouple those two
+    concerns, and a background run is expected to set it to ``1`` so the
+    narrative gate stays open while input prompts stay off.
+
+    Do not "fix" the asymmetry above by making display-only components
+    honor :func:`is_print_enabled`. That would remove the last remaining
+    liveness signal in a run whose narrative gate is closed, turning a
+    partially observable session into a completely silent one.
+
+    Returns:
+        bool: True when debug mode is on or narrative printing is enabled.
+    """
     if is_debug_mode():
         return True
     if is_print_enabled():
