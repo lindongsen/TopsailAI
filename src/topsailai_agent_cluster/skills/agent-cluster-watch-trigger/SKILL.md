@@ -119,8 +119,8 @@ including the booleans and the timestamp.
 | `AGENT_CLUSTER_STATE` | `waiting_input` | The state just observed. It is the standard cluster vocabulary, never a provider word. |
 | `AGENT_CLUSTER_PREVIOUS_STATE` | `running` | The state observed on the previous collection for the same session identity. |
 | `AGENT_CLUSTER_ENDPOINT_ID` | opaque ID | The Endpoint that reported the session. Use it to address the machine in a follow-up CLI call. |
-| `AGENT_CLUSTER_CLUSTER_SESSION_ID` | opaque ID | The cluster's own session identity. **This is the identity to use in a follow-up CLI call.** |
-| `AGENT_CLUSTER_PROVIDER_SESSION_ID` | provider string | The provider's own session identifier. It is provider detail, so prefer the cluster ID. |
+| `AGENT_CLUSTER_CLUSTER_SESSION_ID` | opaque ID | The cluster's own session identity, for example `res_e6f6ea3d416b4753f55ac6216ce97552`. It is an internal key: the CLI rejects it as a target, so never pass it to a follow-up command. |
+| `AGENT_CLUSTER_PROVIDER_SESSION_ID` | provider string | The provider's own session identifier, for example `wa-aebcb3f761e5`. **This is the identity to use in a follow-up CLI call**, and the one `list` prints. |
 | `AGENT_CLUSTER_SESSION_NAME` | provider string | The display name the provider reported. It is untrusted text, so never `eval` it. |
 | `AGENT_CLUSTER_PROVIDER_GENERATION` | opaque string | The provider process generation. A changed generation means a different process, so the trigger treats it as a new subject rather than a transition. |
 | `AGENT_CLUSTER_ADAPTER_ID` | opaque ID | The adapter that produced the observation. |
@@ -297,6 +297,76 @@ by a script never reaches the terminal.
 Neither behaviour is how an operator gets a bell in their own terminal over ssh. That is
 `watch --bell`, a CLI flag described under "The Bell Flag" below. Reach for the flag first when the
 reaction is a bell, and for a behaviour only when the reaction must be something else.
+
+### A per-user behaviour that sends WeChat
+
+The shipped tree holds only reactions that need no configuration. A reaction that
+needs a credential, a socket path or a recipient belongs in the per-user root, where
+the operator owns the file and the executor still finds it:
+
+```text
+$HOME/.topsailai/topsailai-agent-cluster.triggers/
+- weixin.conf
+- running_to_waiting_input/weixin.py
+```
+
+`weixin.py` sends one WeChat message describing the session that just went
+`running -> waiting_input`. It is a worked example of the two rules that make a
+per-user behaviour correct, so read it before writing another one.
+
+**It reads its own configuration, because the environment carries none.** The runner
+builds the child environment from a whitelist, so no `TOPSAILAI_WEIXIN_*` variable
+reaches a behaviour. `weixin.conf` therefore holds the bridge socket, the recipient
+and the timeout, and the script parses that file itself. A behaviour that expects an
+inherited variable silently does nothing.
+
+**It uses `send`, never `reply_pending`.** The bridge accepts `send`,
+`reply_pending`, `notify_pending`, `recent` and `status`. `reply_pending` consumes
+the pending-reply marker, and the final-answer hook needs that marker to deliver the
+real answer, so a behaviour that used it would silently drop the answer.
+`notify_pending` only works while a marker is pending, which the answer hook has
+usually already consumed by the time a session goes idle. `send` names its recipient
+explicitly and touches no marker.
+
+The message carries the session information rather than a bare alert: the session
+name, the endpoint, the provider session id, the transition, the project workspace
+and the observation time. Empty fields are omitted instead of rendered as a dangling
+label, so a partial payload still reads correctly.
+
+The provider session id is shown and the cluster `res_...` handle is not. The value an
+operator reads from `list` and types back into a follow-up command is the provider id,
+so that is the one worth printing; the cluster handle is an internal key that only
+makes the message harder to read. `--session-id` therefore means the provider id, and
+`--provider-session-id` is a synonym for it.
+
+Emphasis uses emoji anchors, not Markdown. The WeChat text item carries a single plain
+`text` field and the message item types are only text, image, voice, file and video, so
+`**bold**` would arrive as literal asterisks. Do not add Markdown to a behaviour that
+sends through this bridge.
+
+The same file also runs by hand, which is how it is verified without waiting for a
+transition:
+
+```bash
+$HOME/.topsailai/topsailai-agent-cluster.triggers/running_to_waiting_input/weixin.py \
+  --text "manual check" \
+  --name "demo-session" --endpoint ac.topsail \
+  --session-id wa-0123456789ab \
+  --previous-state running --state waiting_input
+
+# Print the message without sending it.
+$HOME/.topsailai/topsailai-agent-cluster.triggers/running_to_waiting_input/weixin.py --dry-run
+```
+
+With no arguments the same file reads the `AGENT_CLUSTER_*` payload and is what the
+executor runs. Diagnostics go to `weixin.log` beside the configuration, rotated by
+size, because the runner discards stdout and stderr.
+
+Two limits are worth stating before an operator relies on it. WeChat only allows a
+message to a conversation that has already messaged the bot, so the recipient must be
+someone who has talked to it; the bridge refuses the send otherwise and the script
+logs that reason. And the timeout must stay well under the four-second budget, or the
+executor kills the call mid-flight and the message is lost.
 
 ```python
 def behaviour_files(key):
@@ -599,5 +669,8 @@ Check these in order. Each one has a distinct symptom.
   path; add a reaction by dropping one executable file into a transition directory. The `--bell`
   flag is not a behaviour: it is a CLI flag, so it needs no script, no wrapper and no transition
   directory.
+  A reaction that needs configuration lives outside this folder, in the per-user root
+  `$HOME/.topsailai/topsailai-agent-cluster.triggers/`, which the executor searches first; the
+  WeChat behaviour described above is one such file, so it is not part of this skill's tree.
 - **references/**: None. The payload table and the execution contract above are complete.
 - **assets/**: None.
