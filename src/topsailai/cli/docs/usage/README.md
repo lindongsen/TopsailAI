@@ -38,6 +38,8 @@ topsailai --help
 | [topsailai_agent_story](topsailai_agent_story.md) | Manage story memory for an agent session. |
 | [topsailai_count_tokens](topsailai_count_tokens.md) | Count tokens in text or files. |
 | [topsailai_launch_agent](topsailai_launch_agent.md) | Launch an AI agent driver from `.topsailai/settings.yaml`. |
+| [llm_chat](llm_chat.md) | Single-turn chat directly with a language model. |
+| [llm_chats](llm_chats.md) | Multi-turn chat directly with a language model. |
 | [topsailai_logf](topsailai_logf.md) | Tail/follow session or task log files. |
 | [topsailai_project_history](topsailai_project_history.md) | Display recent project/workspace navigation history. |
 | [topsailai_session_add_agent2llm_message](topsailai_session_add_agent2llm_message.md) | Inject a by-the-way message into a running agent's LLM context. |

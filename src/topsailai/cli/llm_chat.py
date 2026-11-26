@@ -33,6 +33,7 @@ os.chdir(_import_topsailai.PROJECT_FOLDER_BASE)
 from topsailai.utils import env_tool
 from topsailai.workspace.llm_shell import get_llm_chat
 
+from cli_topsailai.chat_env import apply_chat_env_defaults
 from cli_topsailai.event_channel_bootstrap import start_event_channel_for_process
 
 
@@ -59,6 +60,9 @@ def main():
         - Session history can be maintained via SESSION_ID environment variable
         - In debug mode, the first message is not printed
     """
+    # Pin this command's own default before any chat object exists, so an
+    # absent TOPSAILAI_PRINT_ENABLED means "no framework display output".
+    apply_chat_env_defaults()
     start_event_channel_for_process()
     llm_chat = get_llm_chat(need_input_message=False, need_print_session=False)
     if not env_tool.is_debug_mode() \

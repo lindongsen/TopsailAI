@@ -1285,3 +1285,38 @@ at the seam, because a passing suite otherwise certifies a call the real functio
 would reject. A live end-to-end run is the only check that catches this class of
 defect, which is why the manual verification script is part of the unit, not an
 optional extra.
+
+## A library default is not a command default
+
+### Trigger
+
+The request was to make `TOPSAILAI_PRINT_ENABLED` default to `0` for
+`llm_chat`/`llm_chats`. The core reader `env_tool.is_print_enabled()` already
+called `os.getenv("TOPSAILAI_PRINT_ENABLED", "0")`, so the first reading was
+"already done, nothing to change". That reading is wrong: the fallback lives in
+the library, so the effective value of these two commands is decided by whatever
+the caller shell or a project settings file exported, and the entry point states
+nothing about its own contract.
+
+### Action taken
+
+Added `cli_topsailai/chat_env.py` with `apply_chat_env_defaults()`, which uses
+`setdefault` so an absent variable becomes `0` while a configured value —
+including an empty one — is preserved, and called it at the start of `main()` in
+both entry points before any chat object exists. Left the library fallback
+untouched, because other callers depend on that contract. Verified with 18 unit
+tests, a negative control that disabled the helper and left the variable absent,
+a real-process check for unset / `1` / empty, and the shipped `bin/` wrapper
+environment.
+
+### Why this prevents recurrence
+
+"Already has a default" and "this command has a default" are different claims.
+A library fallback is shared by every caller, so it cannot express one command's
+contract, and it is invisible at the entry point where the contract belongs.
+When a requirement names a command, pin the value in that command with
+`setdefault` and leave the shared reader alone; then a caller's export cannot
+silently change what the command prints, and the library keeps the behavior its
+other callers rely on. Also check the empty-value case explicitly: `setdefault`
+treats a present empty string as configured, which is the behavior the core
+reader already assumes.
