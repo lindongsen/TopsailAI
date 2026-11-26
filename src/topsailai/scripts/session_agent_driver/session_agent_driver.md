@@ -50,8 +50,8 @@ The analysis agent inspects the session context and calls one of the plugin
 tools:
 
 - `inject_input(session_id, content)` — inject suggested input into the target
-  session. Before delivery, CRLF, CR, and LF newline separators in `content`
-  are replaced with `;`. On injection failure it raises `AgentEndProcess`,
+  session. The `content` text is delivered verbatim, including any newline
+  characters. On injection failure it raises `AgentEndProcess`,
   which shuts the analysis agent down completely; the driver then continues
   polling.
 - `exit_process(session_id=None)` — request the driver to exit its loop.
