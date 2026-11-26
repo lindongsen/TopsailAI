@@ -183,6 +183,28 @@ def _resolve_load_overview(skill_info, folder_path: str) -> bool:
         return skill_info.flag_overview
     return is_need_load_overview(folder_path)
 
+#: Environment variable that controls whether a skill-load message reaches stdout.
+SKILL_LOAD_PRINT_ENABLED_ENV_KEY = "TOPSAILAI_SKILL_LOAD_PRINT_ENABLED"
+
+#: Default for the skill-load stdout switch: keep printing, as before.
+SKILL_LOAD_PRINT_ENABLED_DEFAULT = True
+
+
+def is_skill_load_print_enabled() -> bool:
+    """Return whether the skill-load message may be printed to stdout.
+
+    This switch controls stdout only. The matching log record is written
+    unconditionally, so setting the variable to ``0`` silences the console
+    without losing the record in the log file.
+
+    Returns:
+        bool: ``True`` when the message may be printed, ``False`` otherwise.
+    """
+    return EnvReaderInstance.check_bool(
+        SKILL_LOAD_PRINT_ENABLED_ENV_KEY,
+        default=SKILL_LOAD_PRINT_ENABLED_DEFAULT,
+    )
+
 
 class SkillInfo(object):
     """Container for skill metadata extracted from a skill folder.
@@ -391,10 +413,17 @@ def parse_skill_folder(folder_path: str, raise_on_error: bool = False) -> SkillI
     if skill_info.name:
         preload = bool(skill_info.all.get("preload_docs"))
         load_overview = _resolve_load_overview(skill_info, folder_path)
-        print_tool.print_info(
+        message = (
             f"Skill loaded:\n  folder={folder_path}\n  name={skill_info.name}\n"
             f"  preload={preload}\n  load_overview={load_overview}"
         )
+        # The log record is unconditional: suppressing stdout must never hide
+        # the fact that a skill was loaded from the log file.
+        logger.info(message)
+        if is_skill_load_print_enabled():
+            print_tool.print_with_time(
+                message, need_format=False, color_kind="info"
+            )
         g_skills[skill_info.folder] = skill_info
 
     return skill_info

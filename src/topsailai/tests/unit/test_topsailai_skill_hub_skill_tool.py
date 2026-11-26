@@ -445,8 +445,8 @@ preload_docs:
 
             self.assertEqual(result.name, "PreloadSkill")
             self.assertIn(tmpdir, g_skills)
-            mock_print_tool.print_info.assert_called_once()
-            logged_message = mock_print_tool.print_info.call_args[0][0]
+            mock_print_tool.print_with_time.assert_called_once()
+            logged_message = mock_print_tool.print_with_time.call_args[0][0]
             self.assertIn("Skill loaded:", logged_message)
             self.assertIn("preload=True", logged_message)
             self.assertIn("load_overview=True", logged_message)
@@ -470,8 +470,8 @@ description: A skill without preload docs
 
             self.assertEqual(result.name, "NoPreloadSkill")
             self.assertIn(tmpdir, g_skills)
-            mock_print_tool.print_info.assert_called_once()
-            logged_message = mock_print_tool.print_info.call_args[0][0]
+            mock_print_tool.print_with_time.assert_called_once()
+            logged_message = mock_print_tool.print_with_time.call_args[0][0]
             self.assertIn("Skill loaded:", logged_message)
             self.assertIn("preload=False", logged_message)
             self.assertIn("load_overview=False", logged_message)
@@ -497,8 +497,8 @@ flag_overview: 1
 
             self.assertEqual(result.name, "FlagOverviewSkill")
             self.assertIn(tmpdir, g_skills)
-            mock_print_tool.print_info.assert_called_once()
-            logged_message = mock_print_tool.print_info.call_args[0][0]
+            mock_print_tool.print_with_time.assert_called_once()
+            logged_message = mock_print_tool.print_with_time.call_args[0][0]
             self.assertIn("Skill loaded:", logged_message)
             self.assertIn("load_overview=True", logged_message)
 
@@ -522,8 +522,8 @@ flag_overview: 0
 
             self.assertEqual(result.name, "FlagOverviewDisabledSkill")
             self.assertIn(tmpdir, g_skills)
-            mock_print_tool.print_info.assert_called_once()
-            logged_message = mock_print_tool.print_info.call_args[0][0]
+            mock_print_tool.print_with_time.assert_called_once()
+            logged_message = mock_print_tool.print_with_time.call_args[0][0]
             self.assertIn("Skill loaded:", logged_message)
             self.assertIn("load_overview=False", logged_message)
     @patch('topsailai.skill_hub.skill_tool.EnvReaderInstance')
@@ -538,6 +538,124 @@ flag_overview: 0
 
             self.assertEqual(result.name, "")
             self.assertNotIn(tmpdir, g_skills)
+
+class TestSkillLoadPrintSwitch(unittest.TestCase):
+    """The skill-load stdout switch must never suppress the log record."""
+
+    def setUp(self):
+        """Clear the skill cache so each case parses its own skill."""
+        g_skills.clear()
+
+    def tearDown(self):
+        """Restore the cache to avoid leaking state into other tests."""
+        g_skills.clear()
+
+    def _write_skill(self, folder, name="SwitchSkill"):
+        """Write a minimal SKILL.md into *folder* and return its path."""
+        with open(os.path.join(folder, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(f"---\nname: {name}\ndescription: A skill\n---\n")
+        return folder
+
+    def test_default_prints_to_stdout(self):
+        """An unset variable keeps the previous behavior: the message prints."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill(tmpdir)
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("TOPSAILAI_SKILL_LOAD_PRINT_ENABLED", None)
+                with patch('topsailai.skill_hub.skill_tool.print_tool') as mock_print:
+                    parse_skill_folder(tmpdir)
+                    mock_print.print_with_time.assert_called_once()
+
+    def test_zero_suppresses_stdout_but_keeps_log(self):
+        """Setting the variable to 0 silences stdout and still logs the load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill(tmpdir)
+            with patch.dict(
+                os.environ, {"TOPSAILAI_SKILL_LOAD_PRINT_ENABLED": "0"}, clear=False
+            ):
+                with patch('topsailai.skill_hub.skill_tool.print_tool') as mock_print, \
+                        patch('topsailai.skill_hub.skill_tool.logger') as mock_logger:
+                    parse_skill_folder(tmpdir)
+
+                    mock_print.print_with_time.assert_not_called()
+                    mock_logger.info.assert_called_once()
+                    logged_message = mock_logger.info.call_args[0][0]
+                    self.assertIn("Skill loaded:", logged_message)
+                    self.assertIn(tmpdir, logged_message)
+
+    def test_one_prints_to_stdout(self):
+        """An explicit 1 prints the message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_skill(tmpdir)
+            with patch.dict(
+                os.environ, {"TOPSAILAI_SKILL_LOAD_PRINT_ENABLED": "1"}, clear=False
+            ):
+                with patch('topsailai.skill_hub.skill_tool.print_tool') as mock_print:
+                    parse_skill_folder(tmpdir)
+                    mock_print.print_with_time.assert_called_once()
+
+    def test_truthy_spellings_print(self):
+        """Every documented truthy spelling enables the stdout message."""
+        for value in ("1", "true", "yes", "on", "enabled", "TRUE", "Yes"):
+            with self.subTest(value=value):
+                g_skills.clear()
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    self._write_skill(tmpdir)
+                    with patch.dict(
+                        os.environ,
+                        {"TOPSAILAI_SKILL_LOAD_PRINT_ENABLED": value},
+                        clear=False,
+                    ):
+                        with patch(
+                            'topsailai.skill_hub.skill_tool.print_tool'
+                        ) as mock_print:
+                            parse_skill_folder(tmpdir)
+                            mock_print.print_with_time.assert_called_once()
+
+    def test_falsy_spellings_suppress_stdout(self):
+        """Non-truthy values suppress stdout while the log record remains."""
+        for value in ("0", "false", "no", "off", "disabled", ""):
+            with self.subTest(value=value):
+                g_skills.clear()
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    self._write_skill(tmpdir)
+                    with patch.dict(
+                        os.environ,
+                        {"TOPSAILAI_SKILL_LOAD_PRINT_ENABLED": value},
+                        clear=False,
+                    ):
+                        with patch(
+                            'topsailai.skill_hub.skill_tool.print_tool'
+                        ) as mock_print, patch(
+                            'topsailai.skill_hub.skill_tool.logger'
+                        ) as mock_logger:
+                            parse_skill_folder(tmpdir)
+
+                            mock_print.print_with_time.assert_not_called()
+                            mock_logger.info.assert_called_once()
+
+    def test_helper_reads_the_documented_variable(self):
+        """The helper resolves the documented variable name and default."""
+        from topsailai.skill_hub.skill_tool import (
+            SKILL_LOAD_PRINT_ENABLED_DEFAULT,
+            SKILL_LOAD_PRINT_ENABLED_ENV_KEY,
+            is_skill_load_print_enabled,
+        )
+
+        self.assertEqual(
+            SKILL_LOAD_PRINT_ENABLED_ENV_KEY, "TOPSAILAI_SKILL_LOAD_PRINT_ENABLED"
+        )
+        self.assertTrue(SKILL_LOAD_PRINT_ENABLED_DEFAULT)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TOPSAILAI_SKILL_LOAD_PRINT_ENABLED", None)
+            self.assertTrue(is_skill_load_print_enabled())
+
+        with patch.dict(
+            os.environ, {"TOPSAILAI_SKILL_LOAD_PRINT_ENABLED": "0"}, clear=False
+        ):
+            self.assertFalse(is_skill_load_print_enabled())
+
 
 class TestDuplicateSkillFolderBlocking(unittest.TestCase):
     """Test duplicate skill folder basename handling with SKILL.md comparison."""
@@ -1108,9 +1226,12 @@ class TestDuplicateSkillFolderBlocking(unittest.TestCase):
                 self.assertEqual(second_info.name, "HelloSkill")
                 self.assertIs(second_info, g_skills[first_dir])
                 self.assertNotIn(second_dir, g_skills)
-                mock_logger.info.assert_called_once()
-                logged_message = mock_logger.info.call_args[0][0]
-                self.assertIn("identical SKILL.md", logged_message)
+                info_messages = [call[0][0] for call in mock_logger.info.call_args_list]
+                self.assertTrue(
+                    any("identical SKILL.md" in message for message in info_messages),
+                    info_messages,
+                )
+                self.assertIn("identical SKILL.md", info_messages[-1])
                 mock_logger.error.assert_not_called()
 
     @patch('topsailai.skill_hub.skill_tool.print_tool')

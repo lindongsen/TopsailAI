@@ -949,3 +949,28 @@ broke it. The two layers disagree by construction, so a green unit run is not
 evidence that the payload change is safe. Widening the fixture entry is the correct
 repair rather than dropping the payload key, because the key is the feature and the
 fixture was relying on an accident of the old contract.
+
+## A print helper that logs at DEBUG does not satisfy "always log"
+
+Trigger: the request was to add an environment variable that suppresses the `Skill loaded:`
+message on stdout while keeping the log record. The message was emitted through
+`print_tool.print_info`, which is `logger.debug(msg)` plus a stdout print. The default root
+log level is `INFO`, so the record was never written to the log file unless `DEBUG=1`.
+Gating only the stdout half would have produced a switch that silences the console and
+leaves the log file equally empty, which is the opposite of the requirement.
+
+Action: replace the single `print_info` call with an explicit `logger.info(message)` that
+runs unconditionally, followed by a `print_with_time` call gated on the new
+`TOPSAILAI_SKILL_LOAD_PRINT_ENABLED` switch. Verified end-to-end against the real log file:
+with the switch at `0`, stdout showed 0 occurrences while `topsailai.log` grew from 139 to
+140 `Skill loaded` lines at `INFO`; with the switch unset, stdout showed 1 occurrence and
+the log grew from 140 to 141. Two negative controls (removing the stdout gate, then
+removing the log record) each turned exactly the two new tests red.
+
+Why this prevents recurrence: "print to console and log it" is not one operation, and a
+helper named `print_*` does not promise a durable record. Before claiming that a log line
+exists, check the level the helper logs at against the effective root level: a `DEBUG`
+record under an `INFO` root is discarded, so a feature that only gates the print half
+silently loses the log half too. Split the two concerns explicitly — an unconditional
+`logger.info` for the record and a separately gated print for the console — and prove it by
+reading the real log file, not by asserting on a mock.
