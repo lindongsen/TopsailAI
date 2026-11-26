@@ -974,3 +974,28 @@ record under an `INFO` root is discarded, so a feature that only gates the print
 silently loses the log half too. Split the two concerns explicitly — an unconditional
 `logger.info` for the record and a separately gated print for the console — and prove it by
 reading the real log file, not by asserting on a mock.
+
+## A pristine-worktree control run is invalid when pytest starts from the modified tree
+
+Trigger: verifying the new multi-turn bad-request scenarios needed a negative control, so the
+pristine worktree was put first on `PYTHONPATH` and pytest was started from the modified project
+root. All 7 scenarios passed, which looked like proof that the tests observe nothing. A probe test
+printed `PROBE_MODULE: /TopsailAI/src/topsailai/workspace/agent/agent_shell_base.py` and
+`PROBE_HAS_TUPLE: True`, proving the modified tree had been imported despite the pristine
+`PYTHONPATH`.
+
+Action: run the control from inside the pristine tree, with the test files copied into that tree, so
+the working directory and the production code belong to the same checkout. The corrected control
+produced 3 failed and 4 passed, which is the evidence that the scenarios actually observe the fix.
+Always print the imported module's `__file__` from inside the pytest process before trusting a
+control result, because `PYTHONPATH` alone does not decide which tree is imported.
+
+Why this prevents recurrence: pytest inserts the rootdir of the invocation at the front of
+`sys.path`, so a `PYTHONPATH` entry pointing at another checkout is silently overridden whenever the
+run starts from the tree under test. The failure mode is the worst possible one for a control: the
+control passes, so the change looks untested and the natural reaction is to weaken the assertions
+until they pass on both trees. The probe is what separates "the test is inert" from "the control was
+invalid", and it costs one file. This refines the existing pristine-worktree rule in this file: that
+rule requires forcing `PYTHONPATH` and printing the imported module path, and this entry records why
+the printed path must be checked from inside the pytest process rather than from a separate `python
+-c` invocation, which resolves imports differently.

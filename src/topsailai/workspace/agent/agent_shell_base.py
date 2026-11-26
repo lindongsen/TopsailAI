@@ -42,6 +42,7 @@ from topsailai.ai_base.exception import (
     SummaryWindowLimitError,
 )
 from topsailai.ai_base.llm_control.exception import (
+    LLMProviderBadRequestError,
     LLMProviderConnectionError,
     LLMProviderInternalServerError,
     LLMProviderReadError,
@@ -79,13 +80,24 @@ from topsailai.workspace import terminal_title
 # Provider failures that leave the conversation intact: the request failed, but
 # the session, the messages and the user's intent are all still valid. In
 # interactive mode these abandon the current turn and wait for the next user
-# message instead of terminating the process. Bad-request and permission-denied
-# errors are deliberately excluded because continuing cannot fix them.
+# message instead of terminating the process. Permission-denied errors are
+# deliberately excluded because continuing cannot fix them.
 RECOVERABLE_PROVIDER_ERRORS = (
     LLMProviderInternalServerError,
     LLMProviderConnectionError,
     LLMProviderTimeoutError,
     LLMProviderReadError,
+)
+
+# Provider failures that abandon the turn only in a multi-turn interactive
+# session. A bad-request failure means the request payload is unusable, so
+# resending it cannot help; in a single-turn run there is nothing left to do and
+# the failure stays fatal. A multi-turn session still owns a live conversation,
+# so ending only the current turn preserves the runtime scene for the operator
+# instead of terminating the process. Permission-denied stays fatal everywhere,
+# because a rejected credential cannot be repaired by continuing.
+MULTI_TURN_RECOVERABLE_PROVIDER_ERRORS = (
+    LLMProviderBadRequestError,
 )
 
 # Request-level failures that are not provider failures but leave the
@@ -108,7 +120,7 @@ RECOVERABLE_CONTENT_ERRORS = (
 )
 
 
-def _resolve_recoverable_turn_error(error):
+def _resolve_recoverable_turn_error(error, *, allow_multi_turn_only=False):
     """Return the error that makes a turn recoverable, else ``None``.
 
     A provider failure can reach the User2Agent loop in two shapes. When the
@@ -129,12 +141,19 @@ def _resolve_recoverable_turn_error(error):
     recoverable for the same reason as the others: only the response is
     unusable, so the turn is abandoned instead of the process being terminated.
 
+    A bad-request failure is recoverable only when the caller still owns a live
+    conversation, which is what ``allow_multi_turn_only`` expresses. A
+    single-turn run has nothing left to wait for, so the same failure stays
+    fatal there.
+
     An explicit Exit choice in the retry-exhaustion menu raises the same
     ``LLMRetryExhaustedError`` with the same ``last_error``, but it is a human
     decision to stop rather than a recoverable failure, so it must stay fatal.
 
     Args:
         error (BaseException): The exception caught by the turn loop.
+        allow_multi_turn_only (bool): Whether failures that are recoverable only
+            in a multi-turn session also count as recoverable here.
 
     Returns:
         BaseException | None: The recoverable error, or ``None`` when the
@@ -145,6 +164,10 @@ def _resolve_recoverable_turn_error(error):
         + RECOVERABLE_REQUEST_ERRORS
         + RECOVERABLE_CONTENT_ERRORS
     )
+    unwrappable_errors = RECOVERABLE_PROVIDER_ERRORS + RECOVERABLE_CONTENT_ERRORS
+    if allow_multi_turn_only:
+        recoverable_errors += MULTI_TURN_RECOVERABLE_PROVIDER_ERRORS
+        unwrappable_errors += MULTI_TURN_RECOVERABLE_PROVIDER_ERRORS
     if isinstance(error, recoverable_errors):
         return error
     if not isinstance(error, LLMRetryExhaustedError):
@@ -154,7 +177,6 @@ def _resolve_recoverable_turn_error(error):
     # Only provider and content failures are unwrapped. A wrapped request-budget
     # failure keeps its original fatal outcome, because widening this loop is a
     # separate decision from adding the content verdict.
-    unwrappable_errors = RECOVERABLE_PROVIDER_ERRORS + RECOVERABLE_CONTENT_ERRORS
     candidates = [getattr(error, "last_error", None), error.__cause__]
     for candidate in candidates:
         if isinstance(candidate, unwrappable_errors):
@@ -772,6 +794,7 @@ class AgentChat(AgentChatBase):
                 + RECOVERABLE_PROVIDER_ERRORS
                 + RECOVERABLE_REQUEST_ERRORS
                 + RECOVERABLE_CONTENT_ERRORS
+                + MULTI_TURN_RECOVERABLE_PROVIDER_ERRORS
             ) as e:
                 # Back, a recoverable provider failure, an expired request
                 # budget and a content verdict all abandon this User2Agent
@@ -784,7 +807,14 @@ class AgentChat(AgentChatBase):
                     # The bounded retry loop may already have consumed the
                     # provider failure and raised LLMRetryExhaustedError, so
                     # resolve the underlying recoverable error before deciding.
-                    recoverable_error = _resolve_recoverable_turn_error(e)
+                    # A bad-request failure is recoverable only while the
+                    # session still owns a live conversation: ``times`` is 0 for
+                    # unlimited turns, 1 for a single turn and N for exactly N
+                    # turns, so anything other than 1 is a multi-turn session.
+                    recoverable_error = _resolve_recoverable_turn_error(
+                        e,
+                        allow_multi_turn_only=times != 1,
+                    )
                     if (
                         recoverable_error is None
                         or not interactive_enabled

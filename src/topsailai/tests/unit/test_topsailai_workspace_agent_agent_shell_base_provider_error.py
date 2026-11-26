@@ -535,3 +535,176 @@ def test_worker_thread_request_timeout_still_raises(agent_chat):
 
     agent_chat.ai_agent.run.assert_called_once()
     agent_chat.call_hooks_post_fail_run.assert_not_called()
+
+
+@pytest.mark.parametrize("times", [0, 2, 5])
+def test_multi_turn_interactive_bad_request_abandons_turn(agent_chat, times):
+    """A multi-turn session ends only the turn, keeping the runtime scene."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    agent_chat.ai_agent.run.side_effect = [bad_request, "recovered answer"]
+    failure_hook = agent_chat.call_hooks_post_fail_run
+    success_hook = agent_chat.call_hooks_post_succ_run
+    built_turns = []
+
+    def build_message(*, message, curr_count):
+        built_turns.append((message, curr_count))
+        return message
+
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        # The recovered turn is followed by another input read in a multi-turn
+        # session, so the channel must end explicitly instead of exhausting the
+        # side-effect list.
+        input_messages=("next request", EOFError()),
+    )
+    result, input_mock = _run_with_patches(
+        agent_chat,
+        patches,
+        message="failed request",
+        times=times,
+        need_interactive=True,
+        func_build_message=build_message,
+    )
+
+    assert result == "recovered answer"
+    assert agent_chat.ai_agent.run.call_count == 2
+    assert [item.args[1] for item in agent_chat.ai_agent.run.call_args_list] == [
+        "failed request",
+        "next request",
+    ]
+    # The abandoned turn must not consume the finite-turn budget.
+    assert built_turns == [("failed request", 1), ("next request", 1)]
+    # The abandoned turn reads the next message first; a multi-turn session then
+    # reads once more after the recovered turn, which is the EOF exit.
+    assert input_mock.call_args_list[0] == call(hook=agent_chat.hook_instruction)
+    failure_hook.assert_called_once_with(bad_request)
+    success_hook.assert_called_once_with()
+    assert agent_chat.interrupted is False
+    assert agent_chat.last_message == "recovered answer"
+
+
+def test_multi_turn_interactive_exhausted_bad_request_abandons_turn(agent_chat):
+    """A bad request consumed by the retry loop must also abandon the turn."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    exhausted = LLMRetryExhaustedError(
+        attempts=18,
+        manual_cycle_count=0,
+        last_error=bad_request,
+        retry_reason="bad_request",
+    )
+    agent_chat.ai_agent.run.side_effect = [exhausted, "recovered answer"]
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request", EOFError()),
+    )
+    result, input_mock = _run_with_patches(
+        agent_chat,
+        patches,
+        message="failed request",
+        times=0,
+        need_interactive=True,
+    )
+
+    assert result == "recovered answer"
+    assert agent_chat.ai_agent.run.call_count == 2
+    assert input_mock.call_args_list[0] == call(hook=agent_chat.hook_instruction)
+    agent_chat.call_hooks_post_fail_run.assert_called_once_with(exhausted)
+
+
+def test_multi_turn_non_interactive_bad_request_still_raises(agent_chat):
+    """A non-interactive caller keeps the original fail-fast contract."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    agent_chat.ai_agent.run.side_effect = bad_request
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request",),
+    )
+    with pytest.raises(LLMProviderBadRequestError):
+        _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=0,
+            need_interactive=False,
+        )
+
+    agent_chat.ai_agent.run.assert_called_once()
+    agent_chat.call_hooks_post_fail_run.assert_not_called()
+
+
+def test_multi_turn_worker_thread_bad_request_still_raises(agent_chat):
+    """A worker thread must never read the main conversation's input."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    agent_chat.ai_agent.run.side_effect = bad_request
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request",),
+    )
+    with patch(
+        "topsailai.workspace.agent.agent_shell_base.thread_tool.is_main_thread",
+        return_value=False,
+    ):
+        with pytest.raises(LLMProviderBadRequestError):
+            _run_with_patches(
+                agent_chat,
+                patches,
+                message="failed request",
+                times=0,
+                need_interactive=True,
+            )
+
+    agent_chat.ai_agent.run.assert_called_once()
+    agent_chat.call_hooks_post_fail_run.assert_not_called()
+
+
+def test_multi_turn_permission_denied_still_raises(agent_chat):
+    """A rejected credential cannot be repaired by continuing."""
+    denied = LLMProviderPermissionDeniedError("invalid api key")
+    agent_chat.ai_agent.run.side_effect = denied
+    patches = _run_patches(
+        runtime_input=MagicMock(),
+        input_messages=("next request",),
+    )
+    with pytest.raises(LLMProviderPermissionDeniedError):
+        _run_with_patches(
+            agent_chat,
+            patches,
+            message="failed request",
+            times=0,
+            need_interactive=True,
+        )
+
+    agent_chat.ai_agent.run.assert_called_once()
+    agent_chat.call_hooks_post_fail_run.assert_not_called()
+
+
+def test_resolve_recoverable_turn_error_accepts_bad_request_only_for_multi_turn():
+    """The resolver must gate a bad request on the multi-turn flag."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    assert _resolve_recoverable_turn_error(bad_request) is None
+    assert (
+        _resolve_recoverable_turn_error(bad_request, allow_multi_turn_only=True)
+        is bad_request
+    )
+
+
+def test_resolve_recoverable_turn_error_unwraps_bad_request_only_for_multi_turn():
+    """A wrapped bad request must follow the same multi-turn gate."""
+    bad_request = LLMProviderBadRequestError("malformed request payload")
+    exhausted = LLMRetryExhaustedError(
+        attempts=18,
+        manual_cycle_count=0,
+        last_error=bad_request,
+        retry_reason="bad_request",
+    )
+    assert _resolve_recoverable_turn_error(exhausted) is None
+    assert (
+        _resolve_recoverable_turn_error(exhausted, allow_multi_turn_only=True)
+        is bad_request
+    )
+
+
+def test_resolve_recoverable_turn_error_keeps_permission_denied_fatal():
+    """Permission-denied must stay fatal even with the multi-turn flag."""
+    denied = LLMProviderPermissionDeniedError("invalid api key")
+    assert _resolve_recoverable_turn_error(denied, allow_multi_turn_only=True) is None
