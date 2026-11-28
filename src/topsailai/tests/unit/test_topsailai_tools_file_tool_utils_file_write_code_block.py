@@ -992,5 +992,169 @@ class TestOutputSections:
         assert "recomputed" in doc
 
 
+class TestExtremeInputs:
+    """Boundary and pathological inputs verified against real bytes.
+
+    Every case reads and writes with ``newline=""`` so Python text mode does
+    not translate line endings; otherwise the assertions would observe a
+    translated string instead of the bytes the tool actually produced.
+    """
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_start_num_far_beyond_eof_raises_and_preserves_file(self, tmp_path):
+        """A start line past the end must fail without touching the file."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        with pytest.raises(Exception, match="exceeds file length"):
+            overwrite_code_block(str(test_file), 99, 99, "X\n")
+
+        assert self._read_raw(test_file) == "a\nb\nc\n"
+
+    def test_huge_integer_start_num_raises_instead_of_overflowing(self, tmp_path):
+        """An absurdly large line number must be a business error, not a crash."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        with pytest.raises(Exception, match="exceeds file length"):
+            overwrite_code_block(str(test_file), 10 ** 20, 10 ** 20, "X\n")
+
+        assert self._read_raw(test_file) == "a\nb\nc\n"
+
+    def test_end_num_zero_on_last_line_replaces_only_that_line(self, tmp_path):
+        """``end_num=0`` means "only start_num" even at the final line."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        result = overwrite_code_block(str(test_file), 3, 0, "Z\n")
+
+        assert self._read_raw(test_file) == "a\nb\nZ\n"
+        assert "lines 3-3" in result
+
+    def test_float_start_num_truncates_to_integer_line(self, tmp_path):
+        """A float line number is truncated, matching the string-first contract."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        result = overwrite_code_block(str(test_file), 2.9, 2.9, "X\n")
+
+        assert self._read_raw(test_file) == "a\nX\nc\n"
+        assert "lines 2-2" in result
+
+    def test_negative_float_end_num_is_rejected_without_writing(self, tmp_path):
+        """A negative end_num other than -1 is an invalid request, not a range."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        result = overwrite_code_block(str(test_file), 2, -1.5, "X\n")
+
+        assert isinstance(result, dict)
+        assert result["status"] == "invalid_request"
+        assert self._read_raw(test_file) == "a\nb\nc\n"
+
+    def test_file_of_only_newlines_keeps_its_shape(self, tmp_path):
+        """A file made of blank lines must not collapse when one is replaced."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "\n\n\n")
+
+        result = overwrite_code_block(str(test_file), 2, 2, "X\n")
+
+        assert self._read_raw(test_file) == "\nX\n\n"
+        assert "lines 2-2" in result
+
+    def test_bom_in_file_is_preserved(self, tmp_path):
+        """A leading byte-order mark belongs to the file and must survive."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "\ufeffa\nb\n")
+
+        result = overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "\ufeffa\nB\n"
+        assert "lines 2-2" in result
+
+    def test_bom_in_content_is_written_literally(self, tmp_path):
+        """A BOM inside replacement content is data, not a file marker."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "\ufeffB\n")
+
+        assert self._read_raw(test_file) == "a\n\ufeffB\n"
+
+    def test_very_long_single_line_is_replaced_whole(self, tmp_path):
+        """A 5000-character line must be treated as one line."""
+        test_file = tmp_path / "test.txt"
+        long_line = "x" * 5000
+        self._write_raw(test_file, f"a\n{long_line}\nc\n")
+
+        result = overwrite_code_block(str(test_file), 2, 2, "short\n")
+
+        assert self._read_raw(test_file) == "a\nshort\nc\n"
+        assert "lines 2-2" in result
+
+    def test_many_line_content_reports_the_full_new_range(self, tmp_path):
+        """Replacing one line with 500 lines must report the whole new range."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+        replacement = "".join(f"n{i}\n" for i in range(500))
+
+        result = overwrite_code_block(str(test_file), 2, 2, replacement)
+
+        assert "lines 2-501" in result
+        assert self._read_raw(test_file).count("\n") == 502
+
+    def test_missing_file_raises_before_any_write(self, tmp_path):
+        """A nonexistent path must fail loudly instead of creating a file."""
+        missing = tmp_path / "nope.txt"
+
+        with pytest.raises(Exception, match="File not found"):
+            overwrite_code_block(str(missing), 1, 1, "X\n")
+
+        assert not missing.exists()
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Known defect: the tool reads with newline=None, so every CRLF in the "
+            "file is translated to LF before the edit. See "
+            "issues/issue-line-model-divergence-write-vs-read.md"
+        ),
+    )
+    def test_crlf_file_with_lf_content_keeps_untouched_lines_intact(self, tmp_path):
+        """Replacing one line of a CRLF file must not rewrite the other lines."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb\r\nc\r\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "a\r\nB\nc\r\n"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Known defect: the write path uses str.splitlines while the read path "
+            "uses universal newlines, so a form feed shifts the target line. See "
+            "issues/issue-line-model-divergence-write-vs-read.md"
+        ),
+    )
+    def test_form_feed_does_not_shift_the_target_line(self, tmp_path):
+        """A form feed inside line 1 must not make line 2 select line 1."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\x0cb\nc\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "REPLACED\n")
+
+        assert self._read_raw(test_file) == "a\x0cb\nREPLACED\n"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
