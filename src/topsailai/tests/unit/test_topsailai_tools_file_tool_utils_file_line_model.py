@@ -226,3 +226,40 @@ class TestReadWriteText:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDominantLineEnding:
+    """dominant_line_ending decides which ending inserted text must use."""
+
+    def test_crlf_file(self):
+        """A CRLF file reports CRLF."""
+        assert file_line_model.dominant_line_ending("a\r\nb\r\n") == "\r\n"
+
+    def test_lf_file(self):
+        """An LF file reports LF."""
+        assert file_line_model.dominant_line_ending("a\nb\n") == "\n"
+
+    def test_cr_file(self):
+        """A CR-only file reports CR."""
+        assert file_line_model.dominant_line_ending("a\rb\r") == "\r"
+
+    def test_no_ending_falls_back_to_lf(self):
+        """Text without any ending still needs one, so LF is the fallback."""
+        assert file_line_model.dominant_line_ending("abc") == "\n"
+
+    def test_empty_text_falls_back_to_lf(self):
+        """Empty text has no convention, so LF is the fallback."""
+        assert file_line_model.dominant_line_ending("") == "\n"
+
+    def test_first_ending_wins_in_mixed_file(self):
+        """A mixed file follows its first line, which is deterministic."""
+        assert file_line_model.dominant_line_ending("a\r\nb\nc\r\n") == "\r\n"
+        assert file_line_model.dominant_line_ending("a\nb\r\nc\n") == "\n"
+
+    def test_unterminated_first_line_uses_next_ending(self):
+        """A first line without an ending does not decide the convention."""
+        assert file_line_model.dominant_line_ending("a\r\nb") == "\r\n"
+
+    def test_non_universal_separator_is_not_an_ending(self):
+        """A form feed is not a line ending for the read tool, so it is ignored."""
+        assert file_line_model.dominant_line_ending("a\x0cb\r\n") == "\r\n"

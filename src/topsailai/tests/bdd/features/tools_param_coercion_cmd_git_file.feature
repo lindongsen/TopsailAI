@@ -479,6 +479,71 @@ Feature: Tools accept string-typed parameters from the LLM
     Then the tool call is accepted and produces a result
     And the numbered test file raw content is esc:a\r\nREPLACED
 
+  # ------------------------------------- insert_content_to_file line endings
+  Scenario: insert_content_to_file preserves CRLF endings outside the inserted line
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\nc\r\n
+    When the tool insert_content_to_file is called on the numbered test file with content INSERTED and parameter line_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nb\r\nINSERTED\r\nc\r\n
+
+  Scenario: insert_content_to_file adopts the CRLF ending for the inserted line
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\n
+    When the tool insert_content_to_file is called on the numbered test file with content INSERTED and parameter line_num set to 1
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nINSERTED\r\nb\r\n
+
+  Scenario: insert_content_to_file preserves CR-only endings
+    Given a parameter test file named cr.txt with raw content esc:a\rb\rc\r
+    When the tool insert_content_to_file is called on the numbered test file with content INSERTED and parameter line_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\rb\rINSERTED\rc\r
+
+  Scenario: insert_content_to_file does not glue onto an unterminated last line
+    Given a parameter test file named unterminated.txt with raw content esc:a\nb
+    When the tool insert_content_to_file is called on the numbered test file with content NEW and parameter line_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\nb\nNEW\n
+
+  Scenario: insert_content_to_file does not double the ending of the inserted content
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\n
+    When the tool insert_content_to_file is called on the numbered test file with raw content esc:X\r\n and parameter line_num set to 1
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nX\r\nb\r\n
+
+  Scenario: insert_content_to_file keeps CJK content intact
+    Given a parameter test file named cjk.txt with raw content esc:中文\n第二行\n
+    When the tool insert_content_to_file is called on the numbered test file with content 插入 and parameter line_num set to 1
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:中文\n插入\n第二行\n
+
+  Scenario: insert_content_to_file keeps CJK content intact and adopts CRLF
+    Given a parameter test file named cjk.txt with raw content esc:中文\r\n第二行\r\n
+    When the tool insert_content_to_file is called on the numbered test file with content 插入 and parameter line_num set to 1
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:中文\r\n插入\r\n第二行\r\n
+
+  # ------------------------------------------------------- compare_files
+  Scenario: compare_files reports a change that only alters line endings
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\n and a second file named lf.txt with raw content esc:a\nb\n
+    When the tool compare_files is called on the numbered test file and the second test file
+    Then the tool call is accepted and produces a result
+    And the tool output has a removed line a
+    And the tool output has an added line a
+
+  Scenario: compare_files reports a real edit inside a CRLF file as one hunk
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\nc\r\n and a second file named edited.txt with raw content esc:a\r\nB\r\nc\r\n
+    When the tool compare_files is called on the numbered test file and the second test file
+    Then the tool call is accepted and produces a result
+    And the tool output has a removed line b
+    And the tool output has an added line B
+    And the tool output has no removed line a
+
+  Scenario: compare_files reports nothing for two identical CRLF files
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\n and a second file named same.txt with raw content esc:a\r\nb\r\n
+    When the tool compare_files is called on the numbered test file and the second test file
+    Then the tool call is accepted and produces a result
+    And the tool output is empty
+
   # ------------------------------------------------------ container params
   Scenario Outline: read_files accepts native JSON and bare file lists
     When the tool read_files is called with single parameter files set to <files>

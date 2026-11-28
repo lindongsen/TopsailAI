@@ -16,10 +16,13 @@ def compare_files(file1_path, file2_path, context_lines=3):
         file2_path (str): Path to the second file
         context_lines (int): Number of context lines to show around differences
     """
-    # Read file contents
-    with open(file1_path, 'r', encoding='utf-8') as f1:
+    # Read with newline='' so line endings reach difflib intact. With the default
+    # newline=None both sides are translated identically, so a change that only
+    # alters line endings disappears and the diff reports "no change" for a file
+    # whose every byte differs.
+    with open(file1_path, 'r', encoding='utf-8', newline='') as f1:
         lines1 = f1.readlines()
-    with open(file2_path, 'r', encoding='utf-8') as f2:
+    with open(file2_path, 'r', encoding='utf-8', newline='') as f2:
         lines2 = f2.readlines()
 
     # Create diff comparator
@@ -103,9 +106,11 @@ def get_unified_diff(file1_path, file2_path):
     Returns:
         str: Unified diff format string
     """
-    with open(file1_path, 'r', encoding='utf-8') as f1:
+    # newline='' keeps the endings distinct so an ending-only change is reported
+    # instead of collapsing into an empty diff.
+    with open(file1_path, 'r', encoding='utf-8', newline='') as f1:
         lines1 = f1.readlines()
-    with open(file2_path, 'r', encoding='utf-8') as f2:
+    with open(file2_path, 'r', encoding='utf-8', newline='') as f2:
         lines2 = f2.readlines()
 
     diff = difflib.unified_diff(

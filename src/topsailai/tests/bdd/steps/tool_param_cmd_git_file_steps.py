@@ -165,6 +165,26 @@ def raw_content_file(ctx, name, raw):
     ctx["files"]["numbered"] = path
 
 
+@given(parsers.parse('a parameter test file named {name} with raw content {raw} and a second file named {second_name} with raw content {second_raw}'))
+def raw_content_pair(ctx, name, raw, second_name, second_raw):
+    """Create two fixtures whose endings must stay exact for a diff comparison.
+
+    Both files are written with ``newline=""`` so a ``\\r\\n`` reaches the file
+    unchanged. A default ``open`` would translate it, and a scenario that
+    compares line endings would then compare two already-identical files.
+    """
+    folder = _tmp_folder(ctx)
+    first_path = os.path.join(folder, name)
+    second_path = os.path.join(folder, second_name)
+    with open(first_path, "w", encoding="utf-8", newline="") as handler:
+        handler.write(_expand(ctx, raw))
+    with open(second_path, "w", encoding="utf-8", newline="") as handler:
+        handler.write(_expand(ctx, second_raw))
+    ctx["files"]["active"] = first_path
+    ctx["files"]["numbered"] = first_path
+    ctx["files"]["second"] = second_path
+
+
 # --------------------------------------------------------------------------- when
 
 
@@ -405,6 +425,45 @@ def call_replace_lines_raw(ctx, content, line_number):
     )
 
 
+@when(parsers.parse('the tool insert_content_to_file is called on the numbered test file with content {content} and parameter line_num set to {line_number}'))
+def call_insert_numbered(ctx, content, line_number):
+    """Insert into the numbered fixture so its raw endings can be asserted.
+
+    The wording names ``the numbered test file`` so the generic
+    ``on the test file`` step cannot match this text first.
+    """
+    _invoke(
+        ctx,
+        "insert_content_to_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        content=_expand(ctx, content),
+        line_num=_expand(ctx, line_number),
+    )
+
+
+@when(parsers.parse('the tool insert_content_to_file is called on the numbered test file with raw content {content} and parameter line_num set to {line_number}'))
+def call_insert_numbered_raw(ctx, content, line_number):
+    """Insert content given as an escaped literal, so its ending stays exact."""
+    _invoke(
+        ctx,
+        "insert_content_to_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        content=_expand(ctx, content),
+        line_num=_expand(ctx, line_number),
+    )
+
+
+@when('the tool compare_files is called on the numbered test file and the second test file')
+def call_compare_files(ctx):
+    """Compare the two fixtures byte for byte, without newline translation."""
+    _invoke(
+        ctx,
+        "compare_files",
+        file1_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        file2_path=ctx["files"]["second"],
+    )
+
+
 # --------------------------------------------------------------------------- then
 
 
@@ -560,3 +619,45 @@ def tool_raises(ctx, exception):
     response = ctx["response"]
     assert response["kind"] == "raised", f"expected a raise, got {response}"
     assert response["exception"] == exception, f"unexpected exception: {response}"
+
+
+@then('the tool output is empty')
+def output_is_empty(ctx):
+    """An empty diff is the only correct answer for two identical files."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    assert response["text"] == "", f"expected an empty diff, got {response['text'][:200]!r}"
+
+
+@then(parsers.parse('the tool output has a removed line {text}'))
+def output_has_removed_line(ctx, text):
+    """Match a whole diff line, so a path containing the text cannot satisfy it.
+
+    A substring check on ``-a`` would also match a file path such as
+    ``/tmp/...-abc``, so the assertion anchors on the line boundaries.
+    """
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    wanted = f"\n-{text}\n"
+    body = "\n" + response["text"]
+    assert wanted in body, f"no removed line {text!r} in {response['text'][:300]!r}"
+
+
+@then(parsers.parse('the tool output has an added line {text}'))
+def output_has_added_line(ctx, text):
+    """Match a whole added diff line, anchored on the line boundaries."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    wanted = f"\n+{text}\n"
+    body = "\n" + response["text"]
+    assert wanted in body, f"no added line {text!r} in {response['text'][:300]!r}"
+
+
+@then(parsers.parse('the tool output has no removed line {text}'))
+def output_has_no_removed_line(ctx, text):
+    """An untouched line must appear as context, never as a removal."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    unwanted = f"\n-{text}\n"
+    body = "\n" + response["text"]
+    assert unwanted not in body, f"unexpected removed line {text!r} in {response['text'][:300]!r}"

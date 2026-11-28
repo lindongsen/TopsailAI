@@ -85,3 +85,28 @@ def line_ending_of(line: str) -> str:
     if line.endswith('\r'):
         return '\r'
     return ''
+
+
+def dominant_line_ending(text: str) -> str:
+    """Return the line ending a file uses, for text that must be added to it.
+
+    A tool that appends a bare ``"\\n"`` to a CRLF file introduces one LF line
+    among CRLF lines, so the file ends up with mixed endings and every later
+    diff shows more changes than the edit made.
+
+    The first line that has an ending defines the convention. Counting endings
+    instead would need a tie-break rule for a mixed file, and the first line is
+    both deterministic and the line a reader sees first.
+
+    Args:
+        text (str): Whole file content.
+
+    Returns:
+        str: ``"\\r\\n"``, ``"\\n"``, or ``"\\r"``; ``"\\n"`` when the text has
+            no line ending at all, because a new line still needs one.
+    """
+    for line in split_lines(text):
+        ending = line_ending_of(line)
+        if ending:
+            return ending
+    return '\n'

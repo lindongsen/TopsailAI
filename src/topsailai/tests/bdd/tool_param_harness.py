@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from topsailai.tools import cmd_tool, file_tool
 from topsailai.tools.file_tool_utils import (
+    file_diff,
     file_read_line,
     file_write_code_block,
     file_write_line,
@@ -55,6 +56,7 @@ TOOL_FUNCS: dict[str, Callable[..., Any]] = {
     "read_file_with_context": file_read_line.read_file_with_context,
     "overwrite_lines_in_file": file_write_code_block.overwrite_code_block,
     "replace_lines_in_file": file_write_line.replace_lines_in_file,
+    "compare_files": file_diff.compare_files_strived,
 }
 
 

@@ -62,15 +62,21 @@ class TestFileToolReplaceLinesInFile:
         assert content == "First line\nNew Second line\nThird line\nNew Fourth line\nFifth line"
 
     def test_replace_lines_in_file_preserve_line_endings(self, test_file):
-        """Test that line endings are preserved when replacing lines"""
+        """Test that line endings are preserved when replacing lines
+
+        The file mixes LF and CRLF. Replacing line 3 must leave every other
+        line's ending untouched, so the CRLF on lines 2 and 4 survives. The
+        assertion reads raw bytes because a text-mode read translates endings
+        and would pass whether or not they were preserved.
+        """
         initial_content = "Line 1\nLine 2\r\nLine 3\nLine 4\r\nLine 5"
         with open(test_file, 'w', newline='') as f:
             f.write(initial_content)
         result = replace_lines_in_file(test_file, [(3, "New Line 3")])
         self._assert_diff(result)
-        with open(test_file, 'r', newline='') as f:
-            content = f.read()
-        assert content == "Line 1\nLine 2\nNew Line 3\nLine 4\nLine 5"
+        with open(test_file, 'rb') as f:
+            raw = f.read()
+        assert raw == b"Line 1\nLine 2\r\nNew Line 3\nLine 4\r\nLine 5"
 
     def test_replace_lines_in_file_out_of_bounds_line(self, test_file):
         """Test replacing a line that doesn't exist"""

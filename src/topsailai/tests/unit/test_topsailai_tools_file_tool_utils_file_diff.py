@@ -518,3 +518,131 @@ class TestCompareFilesStrived:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDiffPreservesLineEndingDistinctions:
+    """A diff must report an ending-only change instead of hiding it.
+
+    Both sides used to be read with the default ``newline=None``, which
+    translates ``\\r\\n`` and ``\\r`` to ``\\n`` identically on each side. A file
+    whose every byte changed therefore produced an empty diff, and the tool told
+    the model "nothing changed".
+    """
+
+    def _write_bytes(self, path, data):
+        """Write raw bytes so the fixture cannot translate endings."""
+        path.write_bytes(data)
+
+    def test_ending_only_change_is_reported(self, tmp_path):
+        """CRLF versus LF is a real difference and must not diff as empty."""
+        file1 = tmp_path / "crlf.txt"
+        file2 = tmp_path / "lf.txt"
+        self._write_bytes(file1, b"a\r\nb\r\n")
+        self._write_bytes(file2, b"a\nb\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert result.strip() != ""
+        assert "-a" in result
+        assert "+a" in result
+
+    def test_cr_versus_lf_is_reported(self, tmp_path):
+        """CR versus LF is a real difference."""
+        file1 = tmp_path / "cr.txt"
+        file2 = tmp_path / "lf.txt"
+        self._write_bytes(file1, b"a\rb\r")
+        self._write_bytes(file2, b"a\nb\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert result.strip() != ""
+
+    def test_identical_crlf_files_report_no_change(self, tmp_path):
+        """Identical CRLF files must still report no change."""
+        file1 = tmp_path / "one.txt"
+        file2 = tmp_path / "two.txt"
+        self._write_bytes(file1, b"a\r\nb\r\n")
+        self._write_bytes(file2, b"a\r\nb\r\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert result.strip() == ""
+
+    def test_real_edit_in_crlf_file_is_one_clean_hunk(self, tmp_path):
+        """A single-line edit inside a CRLF file stays a single hunk.
+
+        This is the regression guard for the fix itself: reading with
+        ``newline=''`` must not turn one changed line into a whole-file diff.
+        """
+        file1 = tmp_path / "before.txt"
+        file2 = tmp_path / "after.txt"
+        self._write_bytes(file1, b"a\r\nb\r\nc\r\n")
+        self._write_bytes(file2, b"a\r\nB\r\nc\r\n")
+
+        result = compare_files_strived(str(file1), str(file2))
+
+        assert "-b" in result
+        assert "+B" in result
+        # One hunk header contains two "@@" markers; two hunks would contain four.
+        assert result.count("@@") == 2
+        assert "-a" not in result
+        assert "-c" not in result
+
+    def test_compare_files_reports_ending_only_change(self, tmp_path):
+        """compare_files shares the same read path and must agree.
+
+        This function renders its own line-numbered format rather than a unified
+        diff, so the assertion targets that format: a removed line and an added
+        line for the same content, which only happens when the endings differ.
+        """
+        file1 = tmp_path / "crlf.txt"
+        file2 = tmp_path / "lf.txt"
+        self._write_bytes(file1, b"a\r\nb\r\n")
+        self._write_bytes(file2, b"a\nb\n")
+
+        result = compare_files(str(file1), str(file2))
+
+        assert "Files are identical" not in result
+        assert "| a" in result
+        assert "| b" in result
+        # A removal and an addition of the same text is the signature of an
+        # ending-only change.
+        assert any(line.startswith("-") and "| a" in line for line in result.splitlines())
+        assert any(line.startswith("+") and "| a" in line for line in result.splitlines())
+
+    def test_get_unified_diff_reports_ending_only_change(self, tmp_path):
+        """get_unified_diff is the entry point the write tools use."""
+        file1 = tmp_path / "crlf.txt"
+        file2 = tmp_path / "lf.txt"
+        self._write_bytes(file1, b"a\r\nb\r\n")
+        self._write_bytes(file2, b"a\nb\n")
+
+        result = get_unified_diff(str(file1), str(file2))
+
+        assert result.strip() != ""
+        assert "-a" in result
+        assert "+a" in result
+
+    def test_default_newline_would_hide_the_change(self, tmp_path):
+        """Negative control: the old read mode cannot see the difference.
+
+        Without this control the tests above could pass for an unrelated reason.
+        """
+        file1 = tmp_path / "crlf.txt"
+        file2 = tmp_path / "lf.txt"
+        self._write_bytes(file1, b"a\r\nb\r\n")
+        self._write_bytes(file2, b"a\nb\n")
+
+        with open(str(file1), "r", encoding="utf-8") as handle:
+            translated1 = handle.readlines()
+        with open(str(file2), "r", encoding="utf-8") as handle:
+            translated2 = handle.readlines()
+
+        assert translated1 == translated2
+
+        with open(str(file1), "r", encoding="utf-8", newline="") as handle:
+            raw1 = handle.readlines()
+        with open(str(file2), "r", encoding="utf-8", newline="") as handle:
+            raw2 = handle.readlines()
+
+        assert raw1 != raw2

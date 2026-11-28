@@ -29,6 +29,7 @@ from topsailai.utils import (
 from topsailai.tools.file_tool_utils import (
     file_read_line,
     file_diff,
+    file_line_model,
     file_write_line,
     file_write_code_block,
     file_stat,
@@ -416,13 +417,20 @@ def _insert_data_to_file(file_path: str, data: str, line_num: int, before_or_aft
     if before_or_after not in ("before", "after"):
         raise ValueError(f"before_or_after must be 'before' or 'after', got '{before_or_after}'")
 
-    # Ensure data ends with newline if it doesn't already
-    if data and not data.endswith('\n'):
-        data += '\n'
+    # Read with the shared line model so the endings reach us intact and the
+    # inserted text can follow the file's own convention.
+    original_content = file_line_model.read_text(file_path)
+    lines = file_line_model.split_lines(original_content)
 
-    # Read existing lines
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
+    # A bare "\n" would introduce one LF line into a CRLF file, so the file ends
+    # up with mixed endings and every later diff shows more changes than the edit.
+    ending = file_line_model.dominant_line_ending(original_content)
+
+    # Ensure data ends with the file's line ending if it does not already end
+    # with one. Checking only "\n" would append a second ending to data that
+    # already ends with "\r\n" or "\r".
+    if data and not file_line_model.line_ending_of(data):
+        data += ending
 
     line_num = int(line_num)
 
@@ -438,14 +446,20 @@ def _insert_data_to_file(file_path: str, data: str, line_num: int, before_or_aft
     # Clamp to valid range [0, len(lines)]
     insert_index = max(0, min(insert_index, len(lines)))
 
+    # The line before the insertion point must end with a line ending, otherwise
+    # the inserted text is glued onto it: inserting after an unterminated last
+    # line "b" produced "bNEW" instead of "b" followed by "NEW".
+    if insert_index > 0:
+        previous = lines[insert_index - 1]
+        if not file_line_model.line_ending_of(previous):
+            lines[insert_index - 1] = previous + ending
+
     # Insert the data
     lines.insert(insert_index, data)
 
-    # Write back to file
+    # Write back to file without translating line endings
     new_content = "".join(lines)
-    with open(file_path, 'w') as f:
-        f.writelines(lines)
-        f.flush()
+    file_line_model.write_text(file_path, new_content)
 
     return new_content
 
@@ -466,8 +480,10 @@ def insert_content_to_file(file_path: str, content: str, line_num: int, before_o
     if error:
         return error
     with _file_tool.ctxm_temp_file("") as (tmp_file, fp):
-        with open(file_path, encoding='utf-8') as f1:
-            raw_content = f1.read()
+        # Read through the shared line model so the mirror keeps the original
+        # endings. The default newline=None would translate them, and the diff
+        # baseline would then disagree with the file on every CRLF line.
+        raw_content = file_line_model.read_text(file_path)
 
         if raw_content:
             fp.write(raw_content)
