@@ -896,7 +896,7 @@ class TestOutputSections:
     """The result must carry a reminder, a diff, and the current range content."""
 
     def _sections(self, result):
-        """Split the result into its three documented sections."""
+        """Split the result into its three documented sections by heading."""
         reminder, _, rest = result.partition("\n## Diff\n")
         diff, _, changed = rest.partition("\n## Changed Range")
         return reminder, diff, changed
@@ -913,6 +913,70 @@ class TestOutputSections:
         assert "-b" in diff and "+B" in diff
         assert "## Changed Range" in "## Changed Range" + changed
         assert "2-B" in changed
+
+    def test_every_section_starts_with_its_own_heading(self, tmp_path):
+        """Each of the three sections must be introduced by a distinct heading.
+
+        A section without a heading cannot be located by a reader or a parser,
+        and the reminder used to be bare blockquote text directly under nothing.
+        """
+        target = tmp_path / "headings.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "B\n")
+
+        assert result.startswith("## Reminder\n")
+        assert "\n## Diff\n" in result
+        assert "\n## Changed Range" in result
+
+    def test_headings_appear_once_and_in_order(self, tmp_path):
+        """Each heading must occur exactly once, in the documented order."""
+        target = tmp_path / "order.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "B\n")
+
+        assert result.count("## Reminder") == 1
+        assert result.count("## Diff") == 1
+        assert result.count("## Changed Range") == 1
+        assert (
+            result.index("## Reminder")
+            < result.index("## Diff")
+            < result.index("## Changed Range")
+        )
+
+    def test_heading_cannot_be_confused_with_a_diff_line(self, tmp_path):
+        """A diff line can never begin with ``## ``, so the heading is unambiguous.
+
+        Every diff body line starts with a space, ``+``, ``-``, or ``@@``. This
+        test pins that property so a future change to the diff renderer cannot
+        silently make the section boundary ambiguous.
+        """
+        target = tmp_path / "boundary.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "B\n")
+
+        _, _, rest = result.partition("\n## Diff\n")
+        diff_body, _, _ = rest.partition("\n## Changed Range")
+        for line in diff_body.splitlines():
+            assert not line.startswith("## "), line
+
+    def test_empty_diff_is_named_instead_of_left_blank(self, tmp_path):
+        """Writing the same content produces no diff, which must be stated.
+
+        A heading with nothing under it is indistinguishable from a truncated
+        result, so the empty case carries an explicit sentence.
+        """
+        target = tmp_path / "nochange.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "b")
+
+        _, diff, _ = self._sections(result)
+        assert diff.strip(), "the diff section must not be empty"
+        assert "No difference" in diff
+        assert "## Changed Range" in result
 
     def test_changed_range_grows_with_added_lines(self, tmp_path):
         """A replacement that adds lines must report the recomputed end line."""
@@ -987,9 +1051,21 @@ class TestOutputSections:
         """The LLM-facing contract must describe the recomputed range."""
         doc = overwrite_code_block.__doc__
 
+        assert "## Reminder" in doc
         assert "## Diff" in doc
         assert "## Changed Range" in doc
         assert "recomputed" in doc
+
+    def test_docstring_states_why_the_headings_are_unambiguous(self):
+        """The contract must explain the separator choice, not just list headings.
+
+        A reader who does not know that a diff line can never start with ``## ``
+        may "improve" the separator into something a diff body can contain.
+        """
+        doc = overwrite_code_block.__doc__
+
+        assert "cannot occur" in doc
+        assert "diff line starts with" in doc
 
 
 class TestExtremeInputs:

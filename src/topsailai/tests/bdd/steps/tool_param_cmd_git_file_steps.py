@@ -513,6 +513,16 @@ def output_does_not_contain(ctx, unexpected):
     )
 
 
+@then(parsers.parse('the tool output starts with {expected}'))
+def output_starts_with(ctx, expected):
+    """The first section must be labelled, so no section is an unlabelled block."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    assert response["text"].startswith(expected), (
+        f"output does not start with {expected!r}: {response['text'][:200]!r}"
+    )
+
+
 @then(parsers.parse('the command succeeds and prints {expected}'))
 def command_succeeds(ctx, expected):
     """The shell command ran with the coerced control arguments."""

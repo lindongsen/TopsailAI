@@ -15,6 +15,24 @@ from topsailai.utils import (
 from . import file_diff, file_line_model
 
 
+def _render_diff(diff_content: str) -> str:
+    """Render the diff section body, naming an empty diff instead of leaving it blank.
+
+    A replacement whose content equals the lines already there produces no diff.
+    Printing the heading with nothing under it is indistinguishable from a
+    truncated result, so the empty case is stated explicitly.
+
+    Args:
+        diff_content (str): Unified diff text, possibly empty.
+
+    Returns:
+        str: The diff text, or a one-line note when there is no difference.
+    """
+    if diff_content.strip():
+        return diff_content
+    return "No difference: the written content equals the lines that were already there.\n"
+
+
 def _render_changed_range(start_idx: int, new_lines: list[str]) -> str:
     """Render the post-edit content of the replaced range with line numbers.
 
@@ -124,9 +142,13 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         parameter is rejected. Out-of-range line numbers raise an
         ``Exception`` instead of returning, so confirm the line numbers first.
 
-        The three sections are:
-        1. A reminder that the line numbers changed and must be re-read.
-        2. ``## Diff`` — the unified diff of the edit.
+        The three sections are separated by ``## `` headings, which cannot occur
+        inside a diff body because every diff line starts with a space, ``+``,
+        ``-``, or ``@@``. Each heading therefore marks exactly one section:
+
+        1. ``## Reminder`` — the line numbers changed and must be re-read.
+        2. ``## Diff`` — the unified diff of the edit, or an explicit note when
+           the written content equals what was already there.
         3. ``## Changed Range`` — the current content of the replaced range with
            line numbers. Its end line is recomputed from the lines actually
            written, because the replacement may add or remove lines, so it can
@@ -273,9 +295,10 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         # the requested ``end_num``.
         changed_range = _render_changed_range(start_idx, new_lines)
         return (
+            "## Reminder\n"
             "> You CANNOT call continuously due to the line number will change after each call.\n"
             "> Invoke the tool that provides line numbers to check content Now!\n"
             "\n## Diff\n"
-            f"{diff_content}\n"
+            f"{_render_diff(diff_content)}\n"
             f"{changed_range}"
         )

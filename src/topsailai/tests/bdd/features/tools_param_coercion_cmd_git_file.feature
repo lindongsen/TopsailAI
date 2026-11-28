@@ -397,9 +397,25 @@ Feature: Tools accept string-typed parameters from the LLM
     Given a parameter test file named short.txt containing lines L1 to L10
     When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to 4
     Then the tool call is accepted and produces a result
+    And the tool output contains ## Reminder
     And the tool output contains ## Diff
     And the tool output contains ## Changed Range
     And the tool output contains 3-REPLACED
+
+  Scenario: overwrite_lines_in_file separates its three sections with headings
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to 4
+    Then the tool call is accepted and produces a result
+    And the tool output starts with ## Reminder
+    And the tool output contains ## Diff
+    And the tool output contains ## Changed Range
+
+  Scenario: overwrite_lines_in_file names an empty diff instead of leaving it blank
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content L3 and parameters start_num set to 3 and end_num set to 3
+    Then the tool call is accepted and produces a result
+    And the tool output contains No difference
+    And the tool output contains ## Changed Range
 
   Scenario: overwrite_lines_in_file recomputes the range when the block grows
     Given a parameter test file named short.txt containing lines L1 to L10
