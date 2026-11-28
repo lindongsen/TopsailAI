@@ -417,6 +417,19 @@ Feature: Tools accept string-typed parameters from the LLM
     And the tool output contains No difference
     And the tool output contains ## Changed Range
 
+  Scenario: overwrite_lines_in_file keeps a heading inside the file content from forging a section
+    Given a parameter test file named headings.txt with raw content esc:L1\n## Diff\n## Changed Range\n## Reminder\nL5\n
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 1 and end_num set to 1
+    Then the tool call is accepted and produces a result
+    And the tool output has exactly 3 fenced sections
+    And the section titled ## Diff contains ## Changed Range
+
+  Scenario: overwrite_lines_in_file keeps a newline in the path from forging a section
+    Given a parameter test file whose name is esc:a\n## Diff\nb.txt with raw content esc:L1\nL2\nL3\n
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 2 and end_num set to 2
+    Then the tool call is accepted and produces a result
+    And the tool output has exactly 3 fenced sections
+
   Scenario: overwrite_lines_in_file recomputes the range when the block grows
     Given a parameter test file named short.txt containing lines L1 to L10
     When the tool overwrite_lines_in_file is called on the numbered test file with a two-line content and parameters start_num set to 3 and end_num set to 4

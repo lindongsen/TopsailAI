@@ -185,6 +185,21 @@ def raw_content_pair(ctx, name, raw, second_name, second_raw):
     ctx["files"]["second"] = second_path
 
 
+@given(parsers.parse('a parameter test file whose name is {name} with raw content {raw}'))
+def raw_content_file_with_escaped_name(ctx, name, raw):
+    """Create a fixture whose *name* also needs escape decoding.
+
+    A path is not a trusted string: it can contain a newline, and the diff header
+    prints the path verbatim. This fixture exists so a scenario can prove that a
+    hostile path cannot forge a section boundary in the tool output.
+    """
+    path = os.path.join(_tmp_folder(ctx), _expand(ctx, name))
+    with open(path, "w", encoding="utf-8", newline="") as handler:
+        handler.write(_expand(ctx, raw))
+    ctx["files"]["active"] = path
+    ctx["files"]["numbered"] = path
+
+
 # --------------------------------------------------------------------------- when
 
 
@@ -671,3 +686,59 @@ def output_has_no_removed_line(ctx, text):
     unwanted = f"\n-{text}\n"
     body = "\n" + response["text"]
     assert unwanted not in body, f"unexpected removed line {text!r} in {response['text'][:300]!r}"
+
+
+def _parse_fenced_sections(text: str) -> list[tuple[str, str]]:
+    """Split tool output into ``(title, body)`` pairs using the fences.
+
+    A heading string cannot be used as a boundary: the diff body can contain the
+    same text, because a file whose own content holds a heading line, or a path
+    containing a newline, injects lines the tool never wrote. The fence is the
+    boundary, so this parser fails loudly when a section is not fenced or when a
+    body line closes its own fence.
+    """
+    lines = text.splitlines()
+    sections: list[tuple[str, str]] = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("## "):
+            index += 1
+            continue
+        title = lines[index]
+        index += 1
+        assert index < len(lines), f"section {title!r} has no fence"
+        fence = lines[index]
+        assert fence and set(fence) == {"`"}, (
+            f"section {title!r} is not followed by a fence: {fence!r}"
+        )
+        index += 1
+        body: list[str] = []
+        while index < len(lines) and lines[index] != fence:
+            body.append(lines[index])
+            index += 1
+        assert index < len(lines), f"section {title!r} has no closing fence"
+        index += 1
+        sections.append((title, "\n".join(body)))
+    return sections
+
+
+@then(parsers.parse('the tool output has exactly {count} fenced sections'))
+def output_has_fenced_section_count(ctx, count):
+    """Content or a path must not be able to add a section to the output."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    sections = _parse_fenced_sections(response["text"])
+    titles = [title for title, _ in sections]
+    assert len(sections) == int(count), (
+        f"expected {count} fenced sections, got {len(sections)}: {titles}"
+    )
+
+
+@then(parsers.parse('the section titled {title} contains {text}'))
+def section_contains(ctx, title, text):
+    """The injected text must sit inside the section body, not outside it."""
+    response = ctx["response"]
+    assert response["kind"] != "raised", f"tool raised: {response}"
+    matches = [body for name, body in _parse_fenced_sections(response["text"]) if name.startswith(title)]
+    assert len(matches) == 1, f"expected one {title!r} section, got {len(matches)}"
+    assert text in matches[0], f"{text!r} missing from the {title!r} body: {matches[0][:300]!r}"

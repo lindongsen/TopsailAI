@@ -895,11 +895,44 @@ class TestNonStringContent:
 class TestOutputSections:
     """The result must carry a reminder, a diff, and the current range content."""
 
-    def _sections(self, result):
-        """Split the result into its three documented sections by heading."""
-        reminder, _, rest = result.partition("\n## Diff\n")
-        diff, _, changed = rest.partition("\n## Changed Range")
-        return reminder, diff, changed
+    def _parse_sections(self, result):
+        """Split the result into ``(title, body)`` pairs using the fences.
+
+        A heading string cannot be used as a boundary: the diff body can contain
+        the same text, because a file whose own content holds a heading line, or
+        a path containing a newline, injects lines the tool never wrote. The
+        fence is the boundary, so this parser fails loudly when a section is not
+        fenced or when a body line closes its own fence.
+        """
+        lines = result.splitlines()
+        sections = []
+        index = 0
+        while index < len(lines):
+            if not lines[index].startswith("## "):
+                index += 1
+                continue
+            title = lines[index]
+            index += 1
+            assert index < len(lines), f"section {title!r} has no fence"
+            fence = lines[index]
+            assert fence and set(fence) == {"`"}, (
+                f"section {title!r} is not followed by a fence: {fence!r}"
+            )
+            index += 1
+            body = []
+            while index < len(lines) and lines[index] != fence:
+                body.append(lines[index])
+                index += 1
+            assert index < len(lines), f"section {title!r} has no closing fence"
+            index += 1
+            sections.append((title, "\n".join(body)))
+        return sections
+
+    def _section_body(self, result, title_prefix):
+        """Return the body of the single section whose title starts with the prefix."""
+        matches = [body for title, body in self._parse_sections(result) if title.startswith(title_prefix)]
+        assert len(matches) == 1, f"expected one {title_prefix!r} section, got {len(matches)}"
+        return matches[0]
 
     def test_output_has_reminder_diff_and_changed_range(self, tmp_path):
         """All three sections are present, in the documented order."""
@@ -908,11 +941,14 @@ class TestOutputSections:
 
         result = overwrite_code_block(str(target), 2, 2, "B\n")
 
-        reminder, diff, changed = self._sections(result)
-        assert "CANNOT call continuously" in reminder
+        titles = [title for title, _ in self._parse_sections(result)]
+        assert titles[0].startswith("## Reminder")
+        assert titles[1].startswith("## Diff")
+        assert titles[2].startswith("## Changed Range")
+        assert "CANNOT call continuously" in self._section_body(result, "## Reminder")
+        diff = self._section_body(result, "## Diff")
         assert "-b" in diff and "+B" in diff
-        assert "## Changed Range" in "## Changed Range" + changed
-        assert "2-B" in changed
+        assert "2-B" in self._section_body(result, "## Changed Range")
 
     def test_every_section_starts_with_its_own_heading(self, tmp_path):
         """Each of the three sections must be introduced by a distinct heading.
@@ -929,38 +965,68 @@ class TestOutputSections:
         assert "\n## Diff\n" in result
         assert "\n## Changed Range" in result
 
-    def test_headings_appear_once_and_in_order(self, tmp_path):
-        """Each heading must occur exactly once, in the documented order."""
-        target = tmp_path / "order.txt"
-        target.write_text("a\nb\nc\n", encoding="utf-8")
+    def test_content_containing_headings_does_not_create_extra_sections(self, tmp_path):
+        """A file whose own lines are headings must not forge a section boundary.
 
-        result = overwrite_code_block(str(target), 2, 2, "B\n")
-
-        assert result.count("## Reminder") == 1
-        assert result.count("## Diff") == 1
-        assert result.count("## Changed Range") == 1
-        assert (
-            result.index("## Reminder")
-            < result.index("## Diff")
-            < result.index("## Changed Range")
+        The diff body reproduces the file's context lines, so a file containing
+        ``## Diff`` puts that text inside the diff. Counting heading substrings
+        would report extra sections; parsing by fence must still find exactly
+        three.
+        """
+        target = tmp_path / "tricky.txt"
+        target.write_text(
+            "L1\n## Diff\n## Changed Range\n## Reminder\nL5\n", encoding="utf-8"
         )
 
-    def test_heading_cannot_be_confused_with_a_diff_line(self, tmp_path):
-        """A diff line can never begin with ``## ``, so the heading is unambiguous.
+        result = overwrite_code_block(str(target), 1, 1, "CHANGED\n")
 
-        Every diff body line starts with a space, ``+``, ``-``, or ``@@``. This
-        test pins that property so a future change to the diff renderer cannot
-        silently make the section boundary ambiguous.
+        sections = self._parse_sections(result)
+        assert len(sections) == 3, [title for title, _ in sections]
+        assert [title.split(" (")[0] for title, _ in sections] == [
+            "## Reminder",
+            "## Diff",
+            "## Changed Range",
+        ]
+        assert "## Diff" in self._section_body(result, "## Diff")
+
+    def test_path_containing_newline_does_not_create_extra_sections(self, tmp_path):
+        """A path with a newline injects a real line into the diff header.
+
+        The ``+++`` header is written verbatim, so a newline in the path starts a
+        new line that can begin with ``## ``. That line is not a section title,
+        and the fence must keep it inside the diff body.
         """
-        target = tmp_path / "boundary.txt"
-        target.write_text("a\nb\nc\n", encoding="utf-8")
+        target = tmp_path / "a\n## Diff\nb.txt"
+        target.write_text("L1\nL2\n", encoding="utf-8")
 
-        result = overwrite_code_block(str(target), 2, 2, "B\n")
+        result = overwrite_code_block(str(target), 1, 1, "CHANGED\n")
 
-        _, _, rest = result.partition("\n## Diff\n")
-        diff_body, _, _ = rest.partition("\n## Changed Range")
-        for line in diff_body.splitlines():
-            assert not line.startswith("## "), line
+        sections = self._parse_sections(result)
+        assert len(sections) == 3, [title for title, _ in sections]
+        assert "## Diff" in self._section_body(result, "## Diff")
+
+    def test_fence_escalates_past_backtick_runs_in_the_body(self, tmp_path):
+        """The fence must be longer than any backtick run the body contains.
+
+        A body line equal to the fence would close the section early and let the
+        rest of the body masquerade as new sections, so the fence length is
+        derived from the body instead of being fixed. Only the section whose
+        body holds the backticks needs the longer fence.
+        """
+        target = tmp_path / "ticks.txt"
+        target.write_text("L1\n`````\nL3\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 1, 1, "CHANGED\n")
+
+        sections = self._parse_sections(result)
+        assert len(sections) == 3, [title for title, _ in sections]
+        assert "`````" in self._section_body(result, "## Diff")
+
+        lines = result.splitlines()
+        diff_index = lines.index("## Diff")
+        diff_fence = lines[diff_index + 1]
+        assert set(diff_fence) == {"`"}
+        assert len(diff_fence) >= 6, diff_fence
 
     def test_empty_diff_is_named_instead_of_left_blank(self, tmp_path):
         """Writing the same content produces no diff, which must be stated.
@@ -973,7 +1039,7 @@ class TestOutputSections:
 
         result = overwrite_code_block(str(target), 2, 2, "b")
 
-        _, diff, _ = self._sections(result)
+        diff = self._section_body(result, "## Diff")
         assert diff.strip(), "the diff section must not be empty"
         assert "No difference" in diff
         assert "## Changed Range" in result
@@ -1009,9 +1075,9 @@ class TestOutputSections:
 
         result = overwrite_code_block(str(target), 2, 2, "")
 
-        assert "## Changed Range" in result
-        assert "now empty" in result
-        assert "2-" not in result.split("## Changed Range")[1]
+        body = self._section_body(result, "## Changed Range")
+        assert "now empty" in body
+        assert "2-" not in body
 
     def test_changed_range_uses_real_end_for_end_num_minus_one(self, tmp_path):
         """``end_num=-1`` must report the actual last written line."""
@@ -1045,7 +1111,7 @@ class TestOutputSections:
         result = overwrite_code_block(str(target), 2, 2, "B\r\n")
 
         assert "2-B\n" in result
-        assert "\r" not in result.split("## Changed Range")[1]
+        assert "\r" not in self._section_body(result, "## Changed Range")
 
     def test_docstring_documents_the_three_sections(self):
         """The LLM-facing contract must describe the recomputed range."""
@@ -1056,16 +1122,18 @@ class TestOutputSections:
         assert "## Changed Range" in doc
         assert "recomputed" in doc
 
-    def test_docstring_states_why_the_headings_are_unambiguous(self):
-        """The contract must explain the separator choice, not just list headings.
+    def test_docstring_states_why_the_fence_is_the_boundary(self):
+        """The contract must explain the boundary choice, not just list headings.
 
-        A reader who does not know that a diff line can never start with ``## ``
-        may "improve" the separator into something a diff body can contain.
+        A reader who believes the heading is the boundary will keep counting
+        heading substrings, which a diff body can forge. The contract must say
+        the title is a label and the fence is the boundary.
         """
         doc = overwrite_code_block.__doc__
 
-        assert "cannot occur" in doc
-        assert "diff line starts with" in doc
+        assert "label, not a boundary" in doc
+        assert "section by its fence" in doc
+        assert "one backtick longer" in doc
 
 
 class TestExtremeInputs:

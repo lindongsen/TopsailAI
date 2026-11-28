@@ -15,6 +15,56 @@ from topsailai.utils import (
 from . import file_diff, file_line_model
 
 
+_MIN_FENCE = 3
+
+
+def _fence_for(text: str) -> str:
+    """Return a backtick fence longer than any backtick run inside ``text``.
+
+    A section boundary must not be forgeable by the content it encloses. The
+    diff body can hold arbitrary text: a file whose own content contains a
+    heading line, or a path containing a newline, both inject lines the tool
+    never wrote. A fence of ``max(3, longest_run + 1)`` backticks cannot be
+    closed by any line inside the body, because closing requires a run at least
+    as long as the opening fence.
+
+    Args:
+        text (str): The body that will be placed inside the fence.
+
+    Returns:
+        str: A backtick run usable as an opening and closing fence.
+    """
+    longest = 0
+    run = 0
+    for char in text:
+        if char == "`":
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    return "`" * max(_MIN_FENCE, longest + 1)
+
+
+def _render_fenced_section(title: str, body: str) -> str:
+    """Render one section as a title followed by a fence the body cannot close.
+
+    The title is a label, not a boundary: a diff body can contain the same text,
+    so a reader or parser must locate a section by its fence instead of by the
+    heading string.
+
+    Args:
+        title (str): The heading line naming the section.
+        body (str): The section content, with or without a trailing newline.
+
+    Returns:
+        str: ``title``, the opening fence, the body, and the closing fence.
+    """
+    if not body.endswith("\n"):
+        body += "\n"
+    fence = _fence_for(body)
+    return f"{title}\n{fence}\n{body}{fence}\n"
+
+
 def _render_diff(diff_content: str) -> str:
     """Render the diff section body, naming an empty diff instead of leaving it blank.
 
@@ -52,13 +102,13 @@ def _render_changed_range(start_idx: int, new_lines: list[str]) -> str:
         new_lines (list[str]): The replacement lines, with their line endings.
 
     Returns:
-        str: A titled section holding ``{line_number}-{content}`` lines, or an
-            explicit note when the replacement deleted every line in the range.
+        str: A titled, fenced section holding ``{line_number}-{content}`` lines,
+            or an explicit note when the replacement deleted every line.
     """
     if not new_lines:
-        return (
-            "## Changed Range (current content)\n"
-            "The replaced range is now empty: every line in it was deleted.\n"
+        return _render_fenced_section(
+            "## Changed Range (current content)",
+            "The replaced range is now empty: every line in it was deleted.\n",
         )
 
     first_line = start_idx + 1
@@ -67,9 +117,9 @@ def _render_changed_range(start_idx: int, new_lines: list[str]) -> str:
         f"{first_line + offset}-{line.rstrip('\r\n')}"
         for offset, line in enumerate(new_lines)
     )
-    return (
-        f"## Changed Range (current content, lines {first_line}-{last_line})\n"
-        f"{body}\n"
+    return _render_fenced_section(
+        f"## Changed Range (current content, lines {first_line}-{last_line})",
+        body,
     )
 
 
@@ -142,9 +192,15 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         parameter is rejected. Out-of-range line numbers raise an
         ``Exception`` instead of returning, so confirm the line numbers first.
 
-        The three sections are separated by ``## `` headings, which cannot occur
-        inside a diff body because every diff line starts with a space, ``+``,
-        ``-``, or ``@@``. Each heading therefore marks exactly one section:
+        The three sections are each a ``## `` title followed by a backtick fence.
+        The title is a label, not a boundary: the diff body can contain the same
+        text, because a file whose own content holds a heading line, or a path
+        containing a newline, injects lines this tool never wrote. Locate a
+        section by its fence, never by the heading string.
+
+        The fence is one backtick longer than the longest backtick run inside
+        the body, so no line in the body can close it. That makes the boundary
+        unforgeable by the content it encloses:
 
         1. ``## Reminder`` — the line numbers changed and must be re-read.
         2. ``## Diff`` — the unified diff of the edit, or an explicit note when
@@ -294,11 +350,10 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         # the new content is derived from the lines actually written instead of
         # the requested ``end_num``.
         changed_range = _render_changed_range(start_idx, new_lines)
-        return (
-            "## Reminder\n"
+        reminder = _render_fenced_section(
+            "## Reminder",
             "> You CANNOT call continuously due to the line number will change after each call.\n"
-            "> Invoke the tool that provides line numbers to check content Now!\n"
-            "\n## Diff\n"
-            f"{_render_diff(diff_content)}\n"
-            f"{changed_range}"
+            "> Invoke the tool that provides line numbers to check content Now!\n",
         )
+        diff_section = _render_fenced_section("## Diff", _render_diff(diff_content))
+        return f"{reminder}\n{diff_section}\n{changed_range}"
