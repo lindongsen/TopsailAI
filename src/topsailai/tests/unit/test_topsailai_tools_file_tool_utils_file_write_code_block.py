@@ -892,5 +892,105 @@ class TestNonStringContent:
         assert target.read_text(encoding="utf-8") == "one\nthree\n"
 
 
+class TestOutputSections:
+    """The result must carry a reminder, a diff, and the current range content."""
+
+    def _sections(self, result):
+        """Split the result into its three documented sections."""
+        reminder, _, rest = result.partition("\n## Diff\n")
+        diff, _, changed = rest.partition("\n## Changed Range")
+        return reminder, diff, changed
+
+    def test_output_has_reminder_diff_and_changed_range(self, tmp_path):
+        """All three sections are present, in the documented order."""
+        target = tmp_path / "sections.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "B\n")
+
+        reminder, diff, changed = self._sections(result)
+        assert "CANNOT call continuously" in reminder
+        assert "-b" in diff and "+B" in diff
+        assert "## Changed Range" in "## Changed Range" + changed
+        assert "2-B" in changed
+
+    def test_changed_range_grows_with_added_lines(self, tmp_path):
+        """A replacement that adds lines must report the recomputed end line."""
+        target = tmp_path / "grow.txt"
+        target.write_text("a\nb\nc\nd\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "B1\nB2\nB3\n")
+
+        assert "lines 2-4" in result
+        assert "2-B1" in result
+        assert "3-B2" in result
+        assert "4-B3" in result
+        assert "lines 2-2" not in result
+
+    def test_changed_range_shrinks_with_removed_lines(self, tmp_path):
+        """A replacement that removes lines must report the recomputed end line."""
+        target = tmp_path / "shrink.txt"
+        target.write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 4, "X\n")
+
+        assert "lines 2-2" in result
+        assert "2-X" in result
+        assert "lines 2-4" not in result
+
+    def test_changed_range_reports_empty_when_all_lines_deleted(self, tmp_path):
+        """Deleting the whole range must say so instead of printing nothing."""
+        target = tmp_path / "delete.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "")
+
+        assert "## Changed Range" in result
+        assert "now empty" in result
+        assert "2-" not in result.split("## Changed Range")[1]
+
+    def test_changed_range_uses_real_end_for_end_num_minus_one(self, tmp_path):
+        """``end_num=-1`` must report the actual last written line."""
+        target = tmp_path / "tail.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, -1, "Z\n")
+
+        assert "lines 2-2" in result
+        assert "2-Z" in result
+
+    def test_changed_range_shows_content_the_read_path_would_mis_decode(self, tmp_path):
+        """The range must show what was written, not a re-decoded guess.
+
+        A mostly-ASCII file with one CJK line is detected as ISO-8859-1 by the
+        read path, so re-reading the file would display mojibake.
+        """
+        target = tmp_path / "mixed.txt"
+        target.write_text("x = 1\n中\ny = 2\n", encoding="utf-8")
+
+        result = overwrite_code_block(str(target), 2, 2, "中文替换\n")
+
+        assert "2-中文替换" in result
+        assert "ä¸" not in result
+
+    def test_changed_range_strips_line_endings_from_display(self, tmp_path):
+        """CRLF content must not leave a stray carriage return in the display."""
+        target = tmp_path / "crlf.txt"
+        target.write_text("a\r\nb\r\nc\r\n", encoding="utf-8", newline="")
+
+        result = overwrite_code_block(str(target), 2, 2, "B\r\n")
+
+        assert "2-B\n" in result
+        assert "\r" not in result.split("## Changed Range")[1]
+
+    def test_docstring_documents_the_three_sections(self):
+        """The LLM-facing contract must describe the recomputed range."""
+        doc = overwrite_code_block.__doc__
+
+        assert "## Diff" in doc
+        assert "## Changed Range" in doc
+        assert "recomputed" in doc
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

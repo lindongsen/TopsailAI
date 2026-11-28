@@ -393,6 +393,36 @@ Feature: Tools accept string-typed parameters from the LLM
     And the numbered test file now contains REPLACED
     And the numbered test file no longer contains L10
 
+  Scenario: overwrite_lines_in_file returns a reminder a diff and the changed range
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to 4
+    Then the tool call is accepted and produces a result
+    And the tool output contains ## Diff
+    And the tool output contains ## Changed Range
+    And the tool output contains 3-REPLACED
+
+  Scenario: overwrite_lines_in_file recomputes the range when the block grows
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with a two-line content and parameters start_num set to 3 and end_num set to 4
+    Then the tool call is accepted and produces a result
+    And the tool output contains lines 3-4
+    And the tool output contains 3-FIRST
+    And the tool output contains 4-SECOND
+
+  Scenario: overwrite_lines_in_file recomputes the range when the block shrinks
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 3 and end_num set to 6
+    Then the tool call is accepted and produces a result
+    And the tool output contains lines 3-3
+    And the tool output does not contain lines 3-6
+
+  Scenario: overwrite_lines_in_file reports an empty range when every line is deleted
+    Given a parameter test file named short.txt containing lines L1 to L10
+    When the tool overwrite_lines_in_file is called on the numbered test file with empty content and parameters start_num set to 3 and end_num set to 4
+    Then the tool call is accepted and produces a result
+    And the tool output contains now empty
+    And the numbered test file no longer contains L3
+
   # ------------------------------------------------------ container params
   Scenario Outline: read_files accepts native JSON and bare file lists
     When the tool read_files is called with single parameter files set to <files>

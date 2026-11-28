@@ -15,6 +15,46 @@ from topsailai.utils import (
 from . import file_diff
 
 
+def _render_changed_range(start_idx: int, new_lines: list[str]) -> str:
+    """Render the post-edit content of the replaced range with line numbers.
+
+    The requested ``start_num``/``end_num`` describe the *old* range and cannot
+    be reused for display: the replacement may add lines or remove them, so the
+    range that now holds the new content has a different end. The new range is
+    derived from the lines actually written.
+
+    The lines are taken from the in-memory result instead of re-reading the
+    file, because the write path already decoded the file as UTF-8 while the
+    read path guesses the encoding from a byte sample. A mostly-ASCII file with
+    one CJK line is detected as ISO-8859-1 and would be displayed as mojibake,
+    so re-reading could show content that differs from what was written.
+
+    Args:
+        start_idx (int): 0-based index where the replacement started.
+        new_lines (list[str]): The replacement lines, with their line endings.
+
+    Returns:
+        str: A titled section holding ``{line_number}-{content}`` lines, or an
+            explicit note when the replacement deleted every line in the range.
+    """
+    if not new_lines:
+        return (
+            "## Changed Range (current content)\n"
+            "The replaced range is now empty: every line in it was deleted.\n"
+        )
+
+    first_line = start_idx + 1
+    last_line = start_idx + len(new_lines)
+    body = "\n".join(
+        f"{first_line + offset}-{line.rstrip('\r\n')}"
+        for offset, line in enumerate(new_lines)
+    )
+    return (
+        f"## Changed Range (current content, lines {first_line}-{last_line})\n"
+        f"{body}\n"
+    )
+
+
 def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, content: str = None, **_) -> str:
     """
     Replace a contiguous line range with new content. This is the only tool that
@@ -80,9 +120,18 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         literally as text.
 
     Returns:
-        str: a reminder plus the diff on success, or an ``invalid_request`` dict
-        when a parameter is rejected. Out-of-range line numbers raise an
+        str: three sections on success, or an ``invalid_request`` dict when a
+        parameter is rejected. Out-of-range line numbers raise an
         ``Exception`` instead of returning, so confirm the line numbers first.
+
+        The three sections are:
+        1. A reminder that the line numbers changed and must be re-read.
+        2. ``## Diff`` — the unified diff of the edit.
+        3. ``## Changed Range`` — the current content of the replaced range with
+           line numbers. Its end line is recomputed from the lines actually
+           written, because the replacement may add or remove lines, so it can
+           differ from the requested ``end_num``. Use these numbers for the next
+           call instead of the ones you passed in.
 
     Example:
         Replace lines 5-10 with a new function
@@ -220,8 +269,14 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
             file.flush()
 
         diff_content = file_diff.compare_files_strived(tmp_file, file_path)
+        # The replacement may add or remove lines, so the range that now holds
+        # the new content is derived from the lines actually written instead of
+        # the requested ``end_num``.
+        changed_range = _render_changed_range(start_idx, new_lines)
         return (
             "> You CANNOT call continuously due to the line number will change after each call.\n"
             "> Invoke the tool that provides line numbers to check content Now!\n"
-            + diff_content
+            "\n## Diff\n"
+            f"{diff_content}\n"
+            f"{changed_range}"
         )

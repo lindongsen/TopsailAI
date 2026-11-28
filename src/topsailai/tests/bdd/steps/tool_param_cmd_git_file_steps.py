@@ -287,6 +287,32 @@ def call_overwrite_block(ctx, content, start_value, end_value):
     )
 
 
+@when(parsers.parse('the tool overwrite_lines_in_file is called on the numbered test file with a two-line content and parameters start_num set to {start_value} and end_num set to {end_value}'))
+def call_overwrite_block_two_lines(ctx, start_value, end_value):
+    """A replacement that adds a line, so the range end must be recomputed."""
+    _invoke(
+        ctx,
+        "overwrite_lines_in_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        content="FIRST\nSECOND\n",
+        start_num=_expand(ctx, start_value),
+        end_num=_expand(ctx, end_value),
+    )
+
+
+@when(parsers.parse('the tool overwrite_lines_in_file is called on the numbered test file with empty content and parameters start_num set to {start_value} and end_num set to {end_value}'))
+def call_overwrite_block_empty(ctx, start_value, end_value):
+    """An empty replacement deletes the whole range, so no line survives."""
+    _invoke(
+        ctx,
+        "overwrite_lines_in_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        content="",
+        start_num=_expand(ctx, start_value),
+        end_num=_expand(ctx, end_value),
+    )
+
+
 # --------------------------------------------------------------------------- then
 
 
