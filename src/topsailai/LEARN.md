@@ -999,3 +999,21 @@ invalid", and it costs one file. This refines the existing pristine-worktree rul
 rule requires forcing `PYTHONPATH` and printing the imported module path, and this entry records why
 the printed path must be checked from inside the pytest process rather than from a separate `python
 -c` invocation, which resolves imports differently.
+
+## A Gherkin step that forwards a raw cell value silently sends the token, not the value
+
+Trigger: the new scenario `overwrite_lines_in_file reports an empty range when every line is deleted`
+used `content empty`, but the shared step `call_overwrite_block` passes `content=content` without
+`_expand()`. The tool therefore received the literal string `"empty"`, the diff showed `+empty`, and
+the assertion `"now empty" in text` failed while every other scenario in the file passed.
+
+Action: when a step forwards a cell value to the tool, route it through `_expand()` (or add a
+dedicated step that supplies the intended value) instead of passing the raw text. Here the fix was a
+new step `call_overwrite_block_empty` that sends `content=""`, because widening the shared step would
+have changed the meaning of existing scenarios that legitimately pass literal content.
+
+Why this prevents recurrence: the token grammar (`empty`, `null`, `int:5`, `<sp>`) lives in
+`_expand()`, so a step that skips it accepts the same Gherkin text and produces a different value.
+The failure is easy to misread as a product defect because the tool result looks plausible — it
+really did write something, just not what the scenario meant. The diff in the failure output is the
+decisive evidence: `+empty` proves the argument, not the implementation, was wrong.
