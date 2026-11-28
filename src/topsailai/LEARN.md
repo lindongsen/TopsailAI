@@ -1017,3 +1017,45 @@ Why this prevents recurrence: the token grammar (`empty`, `null`, `int:5`, `<sp>
 The failure is easy to misread as a product defect because the tool result looks plausible — it
 really did write something, just not what the scenario meant. The diff in the failure output is the
 decisive evidence: `+empty` proves the argument, not the implementation, was wrong.
+
+## A text-mode read translates line endings, so a test that reads text cannot see whether they were preserved
+
+Trigger: `insert_content_to_file` and `compare_files` both read with the default `newline=None`.
+Every CRLF and CR-only ending was translated to LF on read, so inserting one line into
+`b'a\r\nb\r\nc\r\n'` rewrote the whole file as `b'a\nb\nNEW\nc\n'`, and comparing
+`b'a\r\nb\r\n'` against `b'a\nb\n'` returned an empty diff — the tool told the model
+"nothing changed" while every byte differed. The pre-existing test
+`test_content_with_carriage_return_newline` passed throughout, because it asserted on
+`read_text()`, which performs the same translation and therefore agrees with the bug.
+
+Action: read and write with `newline=''` at every site that must preserve endings, and assert
+on raw bytes (`open(path, 'rb').read()`) in the tests. A test harness that reads text hides
+exactly the defect it is meant to catch.
+
+Why this prevents recurrence: the defect is invisible from both ends. The product code looks
+correct because `open(path, 'r')` is the ordinary spelling, and the test looks correct because
+it compares the file to an expected string. Only a byte-level assertion distinguishes
+"preserved" from "translated", and only a negative control proves the test can tell them
+apart: the new `TestDiffPreservesLineEndingDistinctions` includes a case that reads the same
+two files with the default `newline=None` and shows the diff collapsing to empty, so the
+assertion is anchored to the mechanism rather than to a coincidence.
+
+## A scenario that passes on the pristine tree is inert, and the input must be changed rather than the assertion
+
+Trigger: two of the new line-ending BDD scenarios passed on the pristine worktree, which meant
+they observed nothing. The CJK scenario used `esc:中文\n第二行\n`, and LF is the hardcoded
+default the old code already produced, so both trees wrote identical bytes. A second scenario
+inserted `B\n` after a line whose own ending had no trailing spaces, so the old
+`line[len(line.rstrip()):]` happened to return the right suffix.
+
+Action: run every new scenario against the pristine tree before trusting it, and when one
+passes there, change the input so the old and new code must differ — here CRLF instead of LF,
+and a line that actually carries trailing spaces. Never weaken the assertion to make the
+control pass.
+
+Why this prevents recurrence: an inert scenario is indistinguishable from a correct one in a
+green run, so the only signal is the pristine control. The temptation when a control fails is
+to relax the expectation, which converts a real gap into a permanent blind spot. Changing the
+input keeps the assertion strict and makes the scenario discriminating: after the rewrite the
+pristine control reported 7 failures instead of 6, and the extra failure is the CJK scenario
+that had been silently passing.
