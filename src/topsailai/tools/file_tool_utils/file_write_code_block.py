@@ -12,7 +12,7 @@ from topsailai.utils import (
     file_tool as _file_tool,
     json_tool,
 )
-from . import file_diff
+from . import file_diff, file_line_model
 
 
 def _render_changed_range(start_idx: int, new_lines: list[str]) -> str:
@@ -185,23 +185,24 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
             except Exception:
                 pass
 
-        # Read the entire file content to preserve line endings
-        with open(file_path, 'r', encoding='utf-8') as file:
-            original_content = file.read()
+        # Read the entire file content without translating line endings, so an
+        # edit to one line does not rewrite the endings of every other line.
+        original_content = file_line_model.read_text(file_path)
 
         if original_content:
             fp.write(original_content)
             fp.flush()
 
-        # Split content into lines while preserving line endings
-        lines_content = original_content.splitlines(keepends=True)
+        # Split with the same line model the read tool reports, so a line number
+        # obtained from the read tool selects the line the model intended.
+        lines_content = file_line_model.split_lines(original_content)
 
         # Handle the new content: split into lines
         if not content:
             new_lines = []
         else:
             # Split content into lines, preserving line endings
-            new_lines = content.splitlines(keepends=True)
+            new_lines = file_line_model.split_lines(content)
 
         # Convert to 0-based indices
         start_idx = start_num - 1
@@ -242,8 +243,8 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
             if lines_content[end_idx:]:
                 # There are subsequent original lines after the replaced block
                 next_line = lines_content[end_idx]
-                # Extract the line ending from the first subsequent original line
-                original_line_ending = next_line[len(next_line.rstrip()):]
+                # Take only the ending, never the trailing spaces of that line
+                original_line_ending = file_line_model.line_ending_of(next_line)
                 if original_line_ending:
                     new_lines[-1] = new_lines[-1] + original_line_ending
                 else:
@@ -254,7 +255,7 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
                 # No subsequent lines - preserve the original line ending from
                 # the last replaced line
                 last_replaced_line = lines_content[end_idx - 1]
-                original_line_ending = last_replaced_line[len(last_replaced_line.rstrip()):]
+                original_line_ending = file_line_model.line_ending_of(last_replaced_line)
                 if original_line_ending:
                     new_lines[-1] = new_lines[-1] + original_line_ending
 
@@ -262,11 +263,9 @@ def overwrite_code_block(file_path: str, start_num: int, end_num: int = 0, conte
         # keep lines after end_idx
         result_lines = lines_content[:start_idx] + new_lines + lines_content[end_idx:]
 
-        # Write the modified content back to the file
+        # Write the modified content back without translating line endings
         new_content_str = ''.join(result_lines)
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(new_content_str)
-            file.flush()
+        file_line_model.write_text(file_path, new_content_str)
 
         diff_content = file_diff.compare_files_strived(tmp_file, file_path)
         # The replacement may add or remove lines, so the range that now holds

@@ -25,6 +25,7 @@ from pytest_bdd import given, parsers, then, when
 from tests.bdd.temp_storage import BDDTempStorage
 from tests.bdd.tool_param_harness import (
     call_tool,
+    read_raw,
     read_text,
     resolve_value,
     write_sample_file,
@@ -47,6 +48,42 @@ def ctx(bdd_temp_storage: BDDTempStorage):
     }
 
 
+_ESCAPES = {"r": "\r", "n": "\n", "t": "\t", "\\": "\\"}
+
+
+def _decode_escapes(text: str) -> str:
+    """Decode the small escape grammar used by raw-content Examples cells.
+
+    ``unicode_escape`` is deliberately not used: it mangles non-ASCII text and
+    would corrupt a CJK fixture. Only the escapes a fixture actually needs are
+    recognised, and an unknown escape is kept verbatim so a typo stays visible
+    instead of silently disappearing.
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char != "\\" or index + 1 >= len(text):
+            result.append(char)
+            index += 1
+            continue
+        marker = text[index + 1]
+        if marker == "x" and index + 4 <= len(text):
+            try:
+                result.append(chr(int(text[index + 2:index + 4], 16)))
+                index += 4
+                continue
+            except ValueError:
+                pass
+        if marker in _ESCAPES:
+            result.append(_ESCAPES[marker])
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
 def _expand(context: dict[str, Any], token: str) -> Any:
     """Resolve one Examples cell into the value an LLM would actually send."""
     value = resolve_value(token)
@@ -57,6 +94,8 @@ def _expand(context: dict[str, Any], token: str) -> Any:
     if not isinstance(value, str):
         return value
     value = value.replace("<sp>", " ")
+    if value.startswith("esc:"):
+        return _decode_escapes(value[len("esc:"):])
     if value == "empty":
         return ""
     for placeholder, path in (
@@ -109,6 +148,21 @@ def literal_file(ctx, name):
         handler.write(ALPHA_TEXT)
     ctx["files"]["active"] = path
     ctx["files"]["alpha"] = path
+
+
+@given(parsers.parse('a parameter test file named {name} with raw content {raw}'))
+def raw_content_file(ctx, name, raw):
+    """Create a fixture from an escaped literal so its endings stay exact.
+
+    The content is written with ``newline=""`` so a ``\\r\\n`` reaches the file
+    unchanged; a default ``open`` would translate it and the fixture itself
+    would already be wrong before the tool under test ran.
+    """
+    path = os.path.join(_tmp_folder(ctx), name)
+    with open(path, "w", encoding="utf-8", newline="") as handler:
+        handler.write(_expand(ctx, raw))
+    ctx["files"]["active"] = path
+    ctx["files"]["numbered"] = path
 
 
 # --------------------------------------------------------------------------- when
@@ -281,7 +335,7 @@ def call_overwrite_block(ctx, content, start_value, end_value):
         ctx,
         "overwrite_lines_in_file",
         file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
-        content=content,
+        content=_expand(ctx, content),
         start_num=_expand(ctx, start_value),
         end_num=_expand(ctx, end_value),
     )
@@ -310,6 +364,44 @@ def call_overwrite_block_empty(ctx, start_value, end_value):
         content="",
         start_num=_expand(ctx, start_value),
         end_num=_expand(ctx, end_value),
+    )
+
+
+@when(parsers.parse('the tool replace_lines_in_file is called on the numbered test file with line {line_number} set to {content}'))
+def call_replace_lines(ctx, line_number, content):
+    """A single-line replacement through the line-oriented write tool."""
+    _invoke(
+        ctx,
+        "replace_lines_in_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        lines=[(int(_expand(ctx, line_number)), _expand(ctx, content))],
+    )
+
+
+@when(parsers.parse('the tool replace_lines_in_file is called on the numbered test file with line {line_number} set to {content} with a trailing newline'))
+def call_replace_lines_with_newline(ctx, line_number, content):
+    """A single-line replacement whose content already carries an LF ending."""
+    _invoke(
+        ctx,
+        "replace_lines_in_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        lines=[(int(_expand(ctx, line_number)), _expand(ctx, content) + "\n")],
+    )
+
+
+@when(parsers.parse('the tool replace_lines_in_file is called on the numbered test file with raw content {content} on line {line_number}'))
+def call_replace_lines_raw(ctx, content, line_number):
+    """A single-line replacement whose content is given as an escaped literal.
+
+    The wording deliberately puts ``raw content`` before ``on line`` so the
+    generic ``set to {content}`` step cannot match this text first and swallow
+    the ``esc:`` prefix as literal content.
+    """
+    _invoke(
+        ctx,
+        "replace_lines_in_file",
+        file_path=ctx["files"].get("numbered") or ctx["files"]["active"],
+        lines=[(int(_expand(ctx, line_number)), _expand(ctx, content))],
     )
 
 
@@ -405,6 +497,41 @@ def numbered_file_absent(ctx, absent):
     """A destructive range must actually remove the tail it claims to replace."""
     content = read_text(ctx["files"]["numbered"])
     assert absent not in content, f"{absent!r} still present in {content!r}"
+
+@then(parsers.parse('the numbered test file raw content is {expected}'))
+def numbered_file_raw_equals(ctx, expected):
+    """Compare the fixture byte for byte, without newline translation.
+
+    ``read_text`` would translate ``\\r\\n`` to ``\\n`` and make a line-ending
+    regression invisible, so this step reads with ``newline=""``.
+    """
+    content = read_raw(ctx["files"]["numbered"])
+    wanted = _expand(ctx, expected)
+    assert content == wanted, f"expected {wanted!r}, got {content!r}"
+
+
+@then(parsers.parse('the numbered test file raw content still starts with {expected}'))
+def numbered_file_raw_starts_with(ctx, expected):
+    """The untouched prefix must keep its original line endings."""
+    content = read_raw(ctx["files"]["numbered"])
+    wanted = _expand(ctx, expected)
+    assert content.startswith(wanted), f"{wanted!r} missing from {content!r}"
+
+
+@then(parsers.parse('the numbered test file raw content still ends with {expected}'))
+def numbered_file_raw_ends_with(ctx, expected):
+    """The untouched suffix must keep its original line endings."""
+    content = read_raw(ctx["files"]["numbered"])
+    wanted = _expand(ctx, expected)
+    assert content.endswith(wanted), f"{wanted!r} missing from {content!r}"
+
+
+@then('the numbered test file raw content contains no carriage return')
+def numbered_file_raw_has_no_cr(ctx):
+    """A stray carriage return is the fingerprint of a half-stripped ending."""
+    content = read_raw(ctx["files"]["numbered"])
+    assert "\r" not in content, f"stray carriage return in {content!r}"
+
 
 
 @then('the tool response carries no raw conversion exception')

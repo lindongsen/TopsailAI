@@ -1121,14 +1121,6 @@ class TestExtremeInputs:
 
         assert not missing.exists()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Known defect: the tool reads with newline=None, so every CRLF in the "
-            "file is translated to LF before the edit. See "
-            "issues/issue-line-model-divergence-write-vs-read.md"
-        ),
-    )
     def test_crlf_file_with_lf_content_keeps_untouched_lines_intact(self, tmp_path):
         """Replacing one line of a CRLF file must not rewrite the other lines."""
         test_file = tmp_path / "test.txt"
@@ -1138,14 +1130,6 @@ class TestExtremeInputs:
 
         assert self._read_raw(test_file) == "a\r\nB\nc\r\n"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Known defect: the write path uses str.splitlines while the read path "
-            "uses universal newlines, so a form feed shifts the target line. See "
-            "issues/issue-line-model-divergence-write-vs-read.md"
-        ),
-    )
     def test_form_feed_does_not_shift_the_target_line(self, tmp_path):
         """A form feed inside line 1 must not make line 2 select line 1."""
         test_file = tmp_path / "test.txt"
@@ -1154,6 +1138,212 @@ class TestExtremeInputs:
         overwrite_code_block(str(test_file), 2, 2, "REPLACED\n")
 
         assert self._read_raw(test_file) == "a\x0cb\nREPLACED\n"
+
+
+class TestLineEndingPreservation:
+    """Editing one line must not rewrite the endings of the other lines.
+
+    These cases pin the fix for the read path translating ``\r\n`` and ``\r`` to
+    ``\n``. Every assertion compares raw bytes, because a text-mode read would
+    translate the result and hide the defect.
+    """
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_crlf_file_keeps_other_lines_crlf(self, tmp_path):
+        """Only the edited line changes; the rest keep CRLF."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb\r\nc\r\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "a\r\nB\nc\r\n"
+
+    def test_cr_only_file_keeps_other_lines_cr(self, tmp_path):
+        """A CR-only file keeps CR on the untouched lines."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\rb\rc\r")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "a\rB\nc\r"
+
+    def test_mixed_endings_are_each_preserved(self, tmp_path):
+        """A file with mixed endings keeps every one of them."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb\nc\rd")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "a\r\nB\nc\rd"
+
+    def test_crlf_file_bytes_are_unchanged_outside_the_edit(self, tmp_path):
+        """The untouched prefix and suffix are byte-identical."""
+        test_file = tmp_path / "test.txt"
+        before = "one\r\ntwo\r\nthree\r\nfour\r\n"
+        self._write_raw(test_file, before)
+
+        overwrite_code_block(str(test_file), 2, 2, "TWO\n")
+
+        after = self._read_raw(test_file)
+        assert after.startswith("one\r\n")
+        assert after.endswith("three\r\nfour\r\n")
+
+    def test_crlf_last_line_without_ending_keeps_supplied_ending(self, tmp_path):
+        """An explicit ending in the content is kept, matching prior behaviour.
+
+        The last line originally had no ending, but the caller supplied one, so
+        the tool keeps what the caller asked for. This is the pre-existing
+        contract, verified against pristine HEAD, and is not part of the line
+        model fix.
+        """
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\r\n")
+
+        assert self._read_raw(test_file) == "a\r\nB\r\n"
+
+    def test_crlf_last_line_without_ending_and_no_supplied_ending(self, tmp_path):
+        """Without a supplied ending the last line stays unterminated."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb")
+
+        overwrite_code_block(str(test_file), 2, 2, "B")
+
+        assert self._read_raw(test_file) == "a\r\nB"
+
+    def test_control_lf_file_is_unchanged(self, tmp_path):
+        """Negative control: an LF file behaves exactly as before."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "B\n")
+
+        assert self._read_raw(test_file) == "a\nB\nc\n"
+
+
+class TestSeparatorShiftSafety:
+    """A separator the read tool ignores must not shift the target line.
+
+    ``str.splitlines()`` treats eight extra characters as boundaries while the
+    read tool does not. Because the model gets its line numbers from the read
+    tool, the write path must use the same model or it edits a different line.
+    """
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    @pytest.mark.parametrize(
+        "separator,label",
+        [
+            ("\x0b", "vertical tab"),
+            ("\x0c", "form feed"),
+            ("\x1c", "file separator"),
+            ("\x1d", "group separator"),
+            ("\x1e", "record separator"),
+            ("\x85", "next line"),
+            ("\u2028", "line separator"),
+            ("\u2029", "paragraph separator"),
+        ],
+    )
+    def test_separator_inside_line_one_does_not_shift_line_two(
+        self, tmp_path, separator, label
+    ):
+        """Line 2 must still be line 2 when line 1 contains the separator."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, f"a{separator}b\nc\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "REPLACED\n")
+
+        assert self._read_raw(test_file) == f"a{separator}b\nREPLACED\n", label
+
+    def test_form_feed_keeps_the_separator_itself(self, tmp_path):
+        """The separator is content and must survive the edit."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\x0cb\nc\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "REPLACED\n")
+
+        assert "\x0c" in self._read_raw(test_file)
+
+    def test_control_lf_file_selects_the_same_line(self, tmp_path):
+        """Negative control: without a separator the line number is unchanged."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "ab\nc\n")
+
+        overwrite_code_block(str(test_file), 2, 2, "REPLACED\n")
+
+        assert self._read_raw(test_file) == "ab\nREPLACED\n"
+
+
+class TestTrailingWhitespaceNotInjected:
+    """The next line's trailing whitespace must not leak into the replacement.
+
+    ``line[len(line.rstrip()):]`` looks like it extracts a line ending but also
+    strips spaces and tabs, so the "ending" of ``"b  \\n"`` is ``"  \\n"``.
+    """
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_next_line_trailing_spaces_are_not_appended(self, tmp_path):
+        """Replacing line 1 must not inherit line 2's trailing spaces."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb  \nc\n")
+
+        overwrite_code_block(str(test_file), 1, 1, "X")
+
+        assert self._read_raw(test_file) == "X\nb  \nc\n"
+
+    def test_next_line_trailing_tab_is_not_appended(self, tmp_path):
+        """A trailing tab on the next line must not be inherited either."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\t\nc\n")
+
+        overwrite_code_block(str(test_file), 1, 1, "X")
+
+        assert self._read_raw(test_file) == "X\nb\t\nc\n"
+
+    def test_last_line_trailing_spaces_are_not_appended(self, tmp_path):
+        """The last line's trailing spaces must not be inherited."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb  \n")
+
+        overwrite_code_block(str(test_file), 1, 1, "X")
+
+        assert self._read_raw(test_file) == "X\nb  \n"
+
+    def test_control_no_trailing_whitespace(self, tmp_path):
+        """Negative control: without trailing whitespace the result is plain."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        overwrite_code_block(str(test_file), 1, 1, "X")
+
+        assert self._read_raw(test_file) == "X\nb\nc\n"
 
 
 if __name__ == "__main__":

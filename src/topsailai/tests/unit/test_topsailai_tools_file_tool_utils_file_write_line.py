@@ -699,5 +699,182 @@ class TestReplaceLinesInFile:
         assert content == "line1\nsecond_change\nline3\n"
 
 
+class TestLineEndingPreservation:
+    """Editing one line must not rewrite the endings of the other lines.
+
+    Every assertion compares raw bytes, because a text-mode read would translate
+    the result and hide the defect.
+    """
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_crlf_file_keeps_other_lines_crlf(self, tmp_path):
+        """Only the edited line changes; the rest keep CRLF."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb\r\nc\r\n")
+
+        replace_lines_in_file(str(test_file), [(2, "B")])
+
+        assert self._read_raw(test_file) == "a\r\nB\r\nc\r\n"
+
+    def test_cr_only_file_keeps_other_lines_cr(self, tmp_path):
+        """A CR-only file keeps CR on the untouched lines."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\rb\rc\r")
+
+        replace_lines_in_file(str(test_file), [(2, "B")])
+
+        assert self._read_raw(test_file) == "a\rB\rc\r"
+
+    def test_mixed_endings_are_each_preserved(self, tmp_path):
+        """A file with mixed endings keeps every one of them."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb\nc\rd")
+
+        replace_lines_in_file(str(test_file), [(2, "B")])
+
+        assert self._read_raw(test_file) == "a\r\nB\nc\rd"
+
+    def test_control_lf_file_is_unchanged(self, tmp_path):
+        """Negative control: an LF file behaves exactly as before."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\nc\n")
+
+        replace_lines_in_file(str(test_file), [(2, "B")])
+
+        assert self._read_raw(test_file) == "a\nB\nc\n"
+
+
+class TestSeparatorShiftSafety:
+    """A separator the read tool ignores must not shift the target line."""
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    @pytest.mark.parametrize(
+        "separator,label",
+        [
+            ("\x0b", "vertical tab"),
+            ("\x0c", "form feed"),
+            ("\x1c", "file separator"),
+            ("\x1d", "group separator"),
+            ("\x1e", "record separator"),
+            ("\x85", "next line"),
+            ("\u2028", "line separator"),
+            ("\u2029", "paragraph separator"),
+        ],
+    )
+    def test_separator_inside_line_one_does_not_shift_line_two(
+        self, tmp_path, separator, label
+    ):
+        """Line 2 must still be line 2 when line 1 contains the separator."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, f"a{separator}b\nc\n")
+
+        replace_lines_in_file(str(test_file), [(2, "REPLACED")])
+
+        assert self._read_raw(test_file) == f"a{separator}b\nREPLACED\n", label
+
+
+class TestTrailingWhitespaceNotInjected:
+    """The next line's trailing whitespace must not leak into the replacement."""
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_next_line_trailing_spaces_are_not_appended(self, tmp_path):
+        """Replacing line 1 must not inherit line 2's trailing spaces."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb  \nc\n")
+
+        replace_lines_in_file(str(test_file), [(1, "X")])
+
+        assert self._read_raw(test_file) == "X\nb  \nc\n"
+
+    def test_next_line_trailing_tab_is_not_appended(self, tmp_path):
+        """A trailing tab on the next line must not be inherited either."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb\t\nc\n")
+
+        replace_lines_in_file(str(test_file), [(1, "X")])
+
+        assert self._read_raw(test_file) == "X\nb\t\nc\n"
+
+
+class TestLastLineWithoutEnding:
+    """The last line's missing ending must not leave a stray carriage return."""
+
+    def _write_raw(self, path, text):
+        """Write text without any newline translation."""
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+
+    def _read_raw(self, path):
+        """Read text without any newline translation."""
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+
+    def test_crlf_content_on_last_line_leaves_no_stray_cr(self, tmp_path):
+        """A CRLF ending on the last line is removed whole, not just its LF.
+
+        Stripping only ``\\n`` used to leave ``b'a\\nB\\r'`` behind.
+        """
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb")
+
+        replace_lines_in_file(str(test_file), [(2, "B\r\n")])
+
+        assert self._read_raw(test_file) == "a\r\nB"
+
+    def test_lf_content_on_last_line_leaves_no_ending(self, tmp_path):
+        """An LF ending on the last line is removed as well."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb")
+
+        replace_lines_in_file(str(test_file), [(2, "B\n")])
+
+        assert self._read_raw(test_file) == "a\r\nB"
+
+    def test_content_without_ending_on_last_line(self, tmp_path):
+        """Content without an ending stays without one."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\r\nb")
+
+        replace_lines_in_file(str(test_file), [(2, "B")])
+
+        assert self._read_raw(test_file) == "a\r\nB"
+
+    def test_no_stray_cr_anywhere_in_the_result(self, tmp_path):
+        """The result must not contain a lone CR that was not in the input."""
+        test_file = tmp_path / "test.txt"
+        self._write_raw(test_file, "a\nb")
+
+        replace_lines_in_file(str(test_file), [(2, "B\r\n")])
+
+        assert "\r" not in self._read_raw(test_file)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

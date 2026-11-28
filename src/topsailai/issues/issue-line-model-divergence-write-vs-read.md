@@ -6,7 +6,7 @@ ProjectRootFolder: /TopsailAI
 ProjectCode: TOPSAILAI
 programming_language: python
 author: DawsonLin
-status: open
+status: fixed
 ---
 
 # Issue: Write Path and Read Path Disagree on What a Line Is
@@ -151,10 +151,58 @@ Fixing the write path changes the behaviour of an existing tool, which is outsid
 scope of the output-format task that discovered it. It needs an explicit decision
 rather than a silent fix.
 
-## Current Disposition
+## Resolution
 
-The human chose to defer the fix and keep this record only. The two defects are
-pinned by `xfail(strict=True)` tests in
-`tests/unit/test_topsailai_tools_file_tool_utils_file_write_code_block.py` under
-`TestExtremeInputs`, so a future fix turns them into XPASS and forces the marker to
-be removed instead of leaving a stale expectation behind.
+The human authorized fixing all four defects together with unit and BDD coverage.
+
+A new module `tools/file_tool_utils/file_line_model.py` is now the single definition
+of the line model, used by both write tools:
+
+- `split_lines(text)` — `io.StringIO(text, newline="").readlines()`, which agrees with
+  the read path on all eleven characters and preserves endings byte for byte.
+- `read_text(file_path)` / `write_text(file_path, text)` — UTF-8 with `newline=""`, so
+  endings are neither translated on read nor on write.
+- `line_ending_of(line)` — returns `\r\n`, `\n`, `\r`, or `''`.
+
+A fourth defect was found while fixing the third: `file_write_line.py` stripped only
+`\n` from the last line, so content ending with `\r\n` left a stray `\r`
+(`b'a\nB\r'`). It now removes the whole ending via `line_ending_of`.
+
+A fifth defect was found in the same expression: `line[len(line.rstrip()):]` looks
+like it extracts the ending but also strips spaces and tabs, so the "ending" of
+`"b  \n"` was `"  \n"` and the next line's trailing whitespace was injected into the
+edited line. `line_ending_of` replaces it.
+
+### Verified behaviour
+
+| Case | Before | After |
+|---|---|---|
+| `a\x0cb\nc\n`, replace line 2 | `a\x0cREPLACED\nc\n` | `a\x0cb\nREPLACED\n` |
+| `a\r\nb\r\nc\r\n`, replace line 2 | `a\nB\nc\n` | `a\r\nB\nc\r\n` |
+| `a\rb\rc\r`, replace line 2 | `a\nB\nc\n` | `a\rB\nc\r` |
+| `a\nb  \nc\n`, replace line 1 with `X` | `X  \nb  \nc\n` | `X\nb  \nc\n` |
+| `a\nb`, replace line 2 with `B\r\n` | `a\nB\r` | `a\nB` |
+
+### Coverage
+
+- `tests/unit/test_topsailai_tools_file_tool_utils_file_line_model.py` — 45 tests,
+  including negative controls proving `str.splitlines` disagrees and that a
+  default-`open()` read translates endings.
+- `file_write_code_block` — 131 tests; `file_write_line` — 55 tests.
+- The two `xfail(strict=True)` markers were removed because the defects are fixed.
+- Nine BDD scenarios in `tests/bdd/features/tools_param_coercion_cmd_git_file.feature`
+  drive the real tools through the harness and read the file with `newline=""`.
+- Pristine control at `aa2cf117`: all nine new scenarios fail there, so they observe
+  the fix rather than passing vacuously.
+
+## Remaining Scope
+
+`tools/file_tool.py::_insert_data_to_file` (the `insert_content_to_file` tool) still
+opens the file with `open(file_path, 'r')` and `open(file_path, 'w')` without
+`encoding` or `newline`, so it has the same line-ending flattening defect. It was not
+changed because it is outside the authorized scope of this fix; it should be migrated
+to `file_line_model` in a follow-up.
+
+`file_diff.py` reads with the default `newline` at four sites. Both diff sides are
+translated identically, so the diff itself stays correct, but this was not verified
+explicitly.

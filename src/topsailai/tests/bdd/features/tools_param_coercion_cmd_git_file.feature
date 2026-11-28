@@ -423,6 +423,62 @@ Feature: Tools accept string-typed parameters from the LLM
     And the tool output contains now empty
     And the numbered test file no longer contains L3
 
+  # ------------------------------------------- line endings and line model
+  Scenario: overwrite_lines_in_file preserves CRLF endings outside the replaced range
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\nc\r\n
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 2 and end_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nREPLACED\r\nc\r\n
+
+  Scenario: replace_lines_in_file preserves CRLF endings outside the replaced line
+    Given a parameter test file named crlf.txt with raw content esc:a\r\nb\r\nc\r\n
+    When the tool replace_lines_in_file is called on the numbered test file with line 2 set to REPLACED
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nREPLACED\r\nc\r\n
+
+  Scenario: overwrite_lines_in_file preserves CR-only endings outside the replaced range
+    Given a parameter test file named cr.txt with raw content esc:a\rb\rc\r
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 2 and end_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\rREPLACED\rc\r
+
+  Scenario: overwrite_lines_in_file does not shift the target line when line one holds a form feed
+    Given a parameter test file named formfeed.txt with raw content esc:a\x0cb\nc\n
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 2 and end_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\x0cb\nREPLACED\n
+
+  Scenario: replace_lines_in_file does not shift the target line when line one holds a form feed
+    Given a parameter test file named formfeed.txt with raw content esc:a\x0cb\nc\n
+    When the tool replace_lines_in_file is called on the numbered test file with line 2 set to REPLACED
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\x0cb\nREPLACED\n
+
+  Scenario: overwrite_lines_in_file does not inject the next line trailing spaces
+    Given a parameter test file named spaces.txt with raw content esc:a\nb  \nc\n
+    When the tool overwrite_lines_in_file is called on the numbered test file with content X and parameters start_num set to 1 and end_num set to 1
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:X\nb  \nc\n
+
+  Scenario: replace_lines_in_file does not inject the replaced line trailing spaces
+    Given a parameter test file named spaces.txt with raw content esc:a  \nb\n
+    When the tool replace_lines_in_file is called on the numbered test file with line 1 set to X
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:X\nb\n
+
+  Scenario: replace_lines_in_file leaves no stray carriage return on an unterminated last line
+    Given a parameter test file named unterminated.txt with raw content esc:a\nb
+    When the tool replace_lines_in_file is called on the numbered test file with raw content esc:B\r\n on line 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\nB
+    And the numbered test file raw content contains no carriage return
+
+  Scenario: overwrite_lines_in_file keeps an unterminated last line unterminated
+    Given a parameter test file named unterminated.txt with raw content esc:a\r\nb
+    When the tool overwrite_lines_in_file is called on the numbered test file with content REPLACED and parameters start_num set to 2 and end_num set to 2
+    Then the tool call is accepted and produces a result
+    And the numbered test file raw content is esc:a\r\nREPLACED
+
   # ------------------------------------------------------ container params
   Scenario Outline: read_files accepts native JSON and bare file lists
     When the tool read_files is called with single parameter files set to <files>

@@ -11,7 +11,7 @@ from topsailai.utils import (
     file_tool as _file_tool,
     json_tool,
 )
-from . import file_diff
+from . import file_diff, file_line_model
 
 
 def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
@@ -54,16 +54,17 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
         if isinstance(lines, str):
             lines = json_tool.json_load(lines)
 
-        # Read the entire file content to preserve line endings
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
+        # Read the entire file content without translating line endings, so an
+        # edit to one line does not rewrite the endings of every other line.
+        content = file_line_model.read_text(file_path)
 
         if content:
             fp.write(content)
             fp.flush()
 
-        # Split content into lines while preserving line endings
-        lines_content = content.splitlines(keepends=True)
+        # Split with the same line model the read tool reports, so a line number
+        # obtained from the read tool selects the line the model intended.
+        lines_content = file_line_model.split_lines(content)
 
         # If the file doesn't end with a newline, the last line won't have line ending
         # So we need to handle this case
@@ -100,9 +101,11 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
                 if new_content == "" or new_content is None:
                     lines_to_delete.add(index)
                 else:
-                    # Get the original line ending from the original content (before we added temporary \n)
+                    # Take only the ending of the original line, never its
+                    # trailing spaces, or those spaces would be appended to the
+                    # replacement.
                     original_line = lines_content[index]
-                    original_line_ending = original_line[len(original_line.rstrip()):]
+                    original_line_ending = file_line_model.line_ending_of(original_line)
 
                     # Check if new_content already has a line ending
                     if new_content.endswith(('\n', '\r\n', '\r')):
@@ -120,20 +123,21 @@ def replace_lines_in_file(file_path: str, lines: list[tuple[int, str]], **_):
         # If last line originally didn't have ending, handle the temporary newline we added
         if last_line_no_ending and lines_content:
             if modified_last_line:
-                # The last line was modified, check if it ends with \n
-                # If it does, we need to remove it because the original had no ending
-                if lines_content[-1].endswith('\n'):
-                    lines_content[-1] = lines_content[-1][:-1]
+                # The last line was modified, check if it ends with a line ending
+                # If it does, we need to remove it because the original had no ending.
+                # Strip the whole ending, not just "\n", or a "\r\n" would leave a
+                # stray "\r" behind.
+                ending = file_line_model.line_ending_of(lines_content[-1])
+                if ending:
+                    lines_content[-1] = lines_content[-1][:-len(ending)]
             else:
                 # The last line was not modified, remove the temporary newline we added
                 if lines_content[-1].endswith('\n'):
                     lines_content[-1] = lines_content[-1][:-1]
 
-        # Write the modified content back to the file
+        # Write the modified content back without translating line endings
         new_content = ''.join(lines_content)
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(new_content)
-            file.flush()
+        file_line_model.write_text(file_path, new_content)
 
         diff_content = file_diff.compare_files_strived(tmp_file, file_path)
         return diff_content

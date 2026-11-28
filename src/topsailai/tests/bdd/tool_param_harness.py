@@ -25,7 +25,11 @@ import os
 from typing import Any, Callable
 
 from topsailai.tools import cmd_tool, file_tool
-from topsailai.tools.file_tool_utils import file_read_line, file_write_code_block
+from topsailai.tools.file_tool_utils import (
+    file_read_line,
+    file_write_code_block,
+    file_write_line,
+)
 
 # ``exec_cmd`` resolves its default working directory from the environment, which is
 # empty under a bare pytest run; command scenarios therefore always pass an explicit
@@ -50,6 +54,7 @@ TOOL_FUNCS: dict[str, Callable[..., Any]] = {
     "read_file_lines": file_read_line.read_file_lines,
     "read_file_with_context": file_read_line.read_file_with_context,
     "overwrite_lines_in_file": file_write_code_block.overwrite_code_block,
+    "replace_lines_in_file": file_write_line.replace_lines_in_file,
 }
 
 
@@ -128,6 +133,17 @@ def write_short_file(folder: str, name: str = "short.txt") -> str:
 def read_text(path: str) -> str:
     """Read one fixture file so scenarios can verify untouched content."""
     with open(path, "r", encoding="utf-8") as handler:
+        return handler.read()
+
+
+def read_raw(path: str) -> str:
+    """Read one fixture file without translating its line endings.
+
+    ``read_text`` uses the default ``newline=None``, which converts ``\\r\\n`` and
+    ``\\r`` to ``\\n``. A scenario that asserts line-ending preservation must use
+    this reader, otherwise the translation hides the very defect it checks.
+    """
+    with open(path, "r", encoding="utf-8", newline="") as handler:
         return handler.read()
 
 
